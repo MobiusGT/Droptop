@@ -56,11 +56,11 @@ Droptop provides floating, non-activating edge shelves that sit above your windo
 ## Installation
 
 ### Download
-Get the latest build from the [Releases page](https://github.com/MobiusGT/Droptop/releases).
+Get the latest `Droptop.dmg` from the [Releases page](https://github.com/MobiusGT/Droptop/releases/latest) (or [direct download](https://github.com/MobiusGT/Droptop/releases/latest/download/Droptop.dmg)).
 
-1. Download and unzip `Droptop.app`
-2. Move `Droptop.app` to your `/Applications` folder
-3. Launch **Droptop** (if macOS warns about an ad-hoc signed build, right-click → **Open** or allow it in **System Settings → Privacy & Security**)
+1. Download and open `Droptop.dmg`
+2. Drag **Droptop** into the **Applications** folder
+3. Launch **Droptop** from Applications (if macOS warns about an ad-hoc signed build, right-click → **Open** or allow it in **System Settings → Privacy & Security**)
 4. Optional: grant **Accessibility** permission in Settings if you want global keyboard shortcuts (screen-edge dragging works out of the box)
 
 ### Build from Source
