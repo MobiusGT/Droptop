@@ -10,28 +10,12 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MobiusGT/Droptop/releases/latest">
-    <img src="Assets/btn-macos.svg" alt="Download for macOS">
-  </a>
-</p>
-
-<p align="center">
   <a href="https://github.com/MobiusGT/Droptop/releases">
     <img src="https://img.shields.io/github/v/release/MobiusGT/Droptop?style=flat-square&color=blue" alt="Version">
   </a>
   <img src="https://img.shields.io/badge/license-GPLv3-blue?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/platform-macOS%2015%2B%20(Apple%20Silicon)-lightgrey?style=flat-square" alt="Platform">
 </p>
-
----
-
-## Credits & Attribution
-
-**Droptop** is a modified fork and derivative of **[Dropi](https://github.com/akinalpfdn/Dropi)**, originally created by **[akinalpfdn](https://github.com/akinalpfdn)** and released under the [GNU General Public License v3.0](LICENSE).
-
-- Full credit for the original concept, project foundation, app icon assets, and open-source Swift/AppKit shelf architecture goes to **[akinalpfdn](https://github.com/akinalpfdn)** ([akinalpfdn/Dropi](https://github.com/akinalpfdn/Dropi)).
-- **All changes, fixes, and new features in Droptop** (modified November 2026) were made with **Gemini 4 Neon Xhigh**.
-- In accordance with the GNU GPLv3, Droptop remains completely free and open source under the same [GPLv3 license](LICENSE).
 
 ---
 
@@ -46,7 +30,6 @@ Droptop provides floating, non-activating edge shelves that sit above your windo
 - **Selectable item lists** — click, `⌘`-click, `⇧`-click, or use **All / None** to take a single item, a multi-selection, or everything from a shelf at once.
 - **5 supported payload types** — files, folders, images, web URLs, and text snippets (with native AppKit `NSPasteboard` and `NSFilePromiseProvider` support).
 - **Dock folder stack compatible** — drag files straight out of folders pinned in the macOS Dock to trigger new shelves or drop into existing ones.
-- **Non-intrusive global drag monitor** — distinguishes genuine drag sessions from Finder left-click marquee multi-select and automatically recovers from macOS event-tap timeouts.
 - **Steady full-name reveal on hover** — hovering truncated long filenames displays a clean anchored tooltip pill right next to the shelf without text jitter.
 
 ### Auto Hide, Positioning & Spaces Support
@@ -55,13 +38,12 @@ Droptop provides floating, non-activating edge shelves that sit above your windo
   - **Shelf Number** (~80% hidden) — shows a clean numbered badge and item count.
   - **Color Only** (~90% hidden) — collapses to a slim themed accent strip.
   - Smooth edge-growing unhide animation and instant resizing when switching styles.
-- **Zero Virtual Desktop (Space) bleed** — auto-hidden shelves shrink strictly within screen bounds so nothing spills onto adjacent desktops, and open shelves auto-hide cleanly when switching Spaces.
 - **Free repositioning & deterministic side switching** — drag any shelf up/down by its header or past the screen's horizontal halfway line to snap to the left or right edge (using a custom drag loop that never triggers macOS's half-screen window tiling animation).
-- **Non-overlapping territory snapping** — shelves cannot be dropped on top of another shelf's territory; overlapping one shelf or a tight multi-shelf cluster snaps cleanly into the free space above or below based on overlap side, with live edge snap preview.
+
 
 ### Themes & Appearance
-- **101 built-in themes** — `System Glass` (adaptive), **50 Dark**, and **50 Light** themes with explicit high-contrast `.aqua`/`.darkAqua` appearances, organized into a collapsible **Themes** section in Settings and sorted smoothly across the color spectrum (Red → Orange → Yellow → Green → Teal → Blue → Purple → Pink → Neutrals).
-- **Additional shelf color variation (`Off`, `Low`, `Medium`, `High`)** — keep Shelf 1 in the base theme while subtly shifting Shelf 2, 3, … within the same color family at 0×, 1×, 2×, or 3× intensity.
+- **Built-in themes** — Optional themes to suit your preferences 
+- **Shelf color variation** — keep Shelf 1 in the base theme while subtly shifting Shelf 2, 3, … within the same color family for easier management of multiple shelves.
 
 ### Additional Triggers
 - **Screen-edge drag** (enabled by default on both left and right edges, with optional glow indicator).
@@ -109,11 +91,22 @@ Or open `Dropi.xcodeproj` in Xcode and build the `Dropi` scheme (which produces 
 
 ---
 
+
 ## Tech Stack
 
 - Swift / SwiftUI
 - AppKit (`NSPanel`, `NSDraggingSource`, `NSDraggingDestination`, `NSFilePromiseProvider`)
 - macOS 15+ (Apple Silicon `arm64`)
+
+---
+
+## Credits & Attribution
+
+**Droptop** is a modified fork and derivative of **[Dropi](https://github.com/akinalpfdn/Dropi)**, originally created by **[akinalpfdn](https://github.com/akinalpfdn)** and released under the [GNU General Public License v3.0](LICENSE).
+
+- Full credit for the original concept, project foundation, app icon assets, and open-source Swift/AppKit shelf architecture goes to **[akinalpfdn](https://github.com/akinalpfdn)** ([akinalpfdn/Dropi](https://github.com/akinalpfdn/Dropi)).
+- **All changes, fixes, and new features in Droptop** (modified November 2026) were made with **Gemini 4 Neon Xhigh**.
+- In accordance with the GNU GPLv3, Droptop remains completely free and open source under the same [GPLv3 license](LICENSE).
 
 ---
 
