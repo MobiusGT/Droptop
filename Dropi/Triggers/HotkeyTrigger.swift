@@ -2,17 +2,52 @@ import AppKit
 
 @MainActor
 final class HotkeyTrigger: ShelfTrigger {
-    var isEnabled: Bool = true
+    var isEnabled: Bool = true {
+        didSet {
+            guard isStarted, oldValue != isEnabled else { return }
+            if isEnabled {
+                installMonitors()
+            } else {
+                removeMonitors()
+            }
+        }
+    }
     var onTrigger: ((TriggerEvent) -> Void)?
 
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    private var isStarted = false
 
     var keyCode: UInt16 = 49
     var modifiers: NSEvent.ModifierFlags = [.command, .shift]
 
+    var hasInstalledMonitors: Bool {
+        localMonitor != nil || globalMonitor != nil
+    }
+
     func start() {
-        stop()
+        isStarted = true
+        if isEnabled {
+            installMonitors()
+        } else {
+            removeMonitors()
+        }
+    }
+
+    func stop() {
+        isStarted = false
+        removeMonitors()
+    }
+
+    func refreshPermissionIfNeeded() {
+        guard isStarted, isEnabled, globalMonitor == nil, Permissions.isAccessibilityGranted else {
+            return
+        }
+        installMonitors()
+    }
+
+    private func installMonitors() {
+        removeMonitors()
 
         // Local monitor always works (even without Accessibility)
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -32,17 +67,11 @@ final class HotkeyTrigger: ShelfTrigger {
         }
     }
 
-    func stop() {
+    private func removeMonitors() {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         globalMonitor = nil
         localMonitor = nil
-    }
-
-    func refreshPermissionIfNeeded() {
-        if globalMonitor == nil && Permissions.isAccessibilityGranted {
-            start()
-        }
     }
 
     private func matches(_ event: NSEvent) -> Bool {

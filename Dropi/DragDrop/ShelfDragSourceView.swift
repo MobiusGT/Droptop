@@ -5,9 +5,10 @@ struct ShelfDragSource: NSViewRepresentable {
     let shelfID: UUID
     let resolveDragItems: () -> [ShelfItem]
     let contextMenuItem: ShelfItem?
-    var onDragCompleted: ((Set<UUID>) -> Void)?
+    var onDragCompleted: ((Set<UUID>, Set<String>) -> Void)?
     var onTap: ((Bool, Bool) -> Void)?
     var onDoubleClick: (() -> Void)?
+    var onQuickLookItem: ((ShelfItem) -> Void)?
     var onRemoveItem: ((ShelfItem) -> Void)?
     var onSelectAll: (() -> Void)?
     var onCopySelection: (() -> Void)?
@@ -25,6 +26,7 @@ struct ShelfDragSource: NSViewRepresentable {
         nsView.onDragCompleted = onDragCompleted
         nsView.onTap = onTap
         nsView.onDoubleClick = onDoubleClick
+        nsView.onQuickLookItem = onQuickLookItem
         nsView.onRemoveItem = onRemoveItem
         nsView.onSelectAll = onSelectAll
         nsView.onCopySelection = onCopySelection
@@ -37,9 +39,10 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
     var shelfID: UUID = UUID()
     var resolveDragItems: (() -> [ShelfItem])?
     var contextMenuItem: ShelfItem?
-    var onDragCompleted: ((Set<UUID>) -> Void)?
+    var onDragCompleted: ((Set<UUID>, Set<String>) -> Void)?
     var onTap: ((Bool, Bool) -> Void)?
     var onDoubleClick: (() -> Void)?
+    var onQuickLookItem: ((ShelfItem) -> Void)?
     var onRemoveItem: ((ShelfItem) -> Void)?
     var onSelectAll: (() -> Void)?
     var onCopySelection: (() -> Void)?
@@ -49,8 +52,14 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
     private var mouseDownLocation: NSPoint?
     private var mouseDownEvent: NSEvent?
     private var draggedItemIDs: Set<UUID> = []
+    private var draggedContainsTemporaryCopy: Bool = false
     private var trackingAreaRef: NSTrackingArea?
+    private var isPointerInside: Bool = false
     private let dragThreshold: CGFloat = 4.0
+
+    static func outsideApplicationOperationMask(containsTemporaryCopy: Bool) -> NSDragOperation {
+        containsTemporaryCopy ? [.copy, .generic] : [.copy, .move, .link, .generic]
+    }
 
     /// Crucial for Dropshelf non-activating panel UX: allows immediate drag-out or click
     /// on the very first mouseDown without ever stealing focus from Finder.
@@ -58,23 +67,56 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
         true
     }
 
+    private func pointerIsInsideVisibleBounds() -> Bool {
+        guard let window, window.isVisible, !window.ignoresMouseEvents else { return false }
+        let visibleBounds = bounds.intersection(visibleRect)
+        guard !visibleBounds.isNull, !visibleBounds.isEmpty else { return false }
+        let rectInWindow = convert(visibleBounds, to: nil)
+        let screenRect = window.convertToScreen(rectInWindow).intersection(window.frame)
+        guard !screenRect.isNull, !screenRect.isEmpty else { return false }
+        return screenRect.contains(NSEvent.mouseLocation)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil && isPointerInside {
+            isPointerInside = false
+            DispatchQueue.main.async { [weak self] in
+                self?.onHoverChanged?(false, .zero, .zero)
+            }
+        }
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let existing = trackingAreaRef {
             removeTrackingArea(existing)
         }
+        let currentlyInside = pointerIsInsideVisibleBounds()
+        var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .inVisibleRect]
+        if currentlyInside {
+            options.insert(.assumeInside)
+        }
         let area = NSTrackingArea(
             rect: .zero,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            options: options,
             owner: self,
             userInfo: nil
         )
         addTrackingArea(area)
         trackingAreaRef = area
+
+        if isPointerInside && !currentlyInside {
+            isPointerInside = false
+            DispatchQueue.main.async { [weak self] in
+                self?.onHoverChanged?(false, .zero, .zero)
+            }
+        }
     }
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
+        isPointerInside = true
         let rowScreenRect: NSRect
         let shelfScreenRect: NSRect
         if let window {
@@ -90,6 +132,7 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
+        isPointerInside = false
         onHoverChanged?(false, .zero, .zero)
     }
 
@@ -99,7 +142,7 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
     ) -> NSDragOperation {
         switch context {
         case .outsideApplication:
-            return [.copy, .move, .link, .generic]
+            return Self.outsideApplicationOperationMask(containsTemporaryCopy: draggedContainsTemporaryCopy)
         case .withinApplication:
             return [.move, .copy]
         @unknown default:
@@ -108,6 +151,7 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
     }
 
     func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
+        (window as? ShelfWindow)?.releaseKeyFocus()
         FilenameTooltipController.shared.hide()
         SelfDragState.begin(fromShelf: shelfID)
     }
@@ -117,16 +161,18 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
         endedAt screenPoint: NSPoint,
         operation: NSDragOperation
     ) {
+        let adoptedPaths = SelfDragState.consumeAdoptedStagedSourcePaths()
         SelfDragState.end()
         GlobalDragMonitor.shared.syncAfterInternalDragEnded()
 
         let finishedIDs = draggedItemIDs
         draggedItemIDs = []
+        draggedContainsTemporaryCopy = false
 
         if operation != [], !finishedIDs.isEmpty {
             let droppedOnSameShelf = window?.frame.contains(screenPoint) ?? false
             if !droppedOnSameShelf && AppSettings.shared.autoRemoveOnDragOut {
-                onDragCompleted?(finishedIDs)
+                onDragCompleted?(finishedIDs, adoptedPaths)
             }
         }
 
@@ -164,6 +210,7 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
         guard !draggingItems.isEmpty else { return }
 
         draggedItemIDs = Set(itemsToDrag.map(\.id))
+        draggedContainsTemporaryCopy = itemsToDrag.contains(where: \.isTemporaryCopy)
         let session = beginDraggingSession(with: draggingItems, event: originEvent, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
         session.draggingFormation = draggingItems.count > 1 ? .pile : .none
@@ -180,6 +227,7 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
             let cmd = event.modifierFlags.contains(.command)
             let shift = event.modifierFlags.contains(.shift)
             onTap?(cmd, shift)
+            (window as? ShelfWindow)?.acquireKeyFocusForKeyboard()
         }
     }
 
@@ -188,6 +236,10 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
         let menu = NSMenu()
 
         if let item = contextMenuItem {
+            let quickLookItem = NSMenuItem(title: "Quick Look", action: #selector(handleQuickLook), keyEquivalent: "")
+            quickLookItem.target = self
+            menu.addItem(quickLookItem)
+
             if item.canOpen {
                 let openItem = NSMenuItem(title: "Open", action: #selector(handleOpen), keyEquivalent: "")
                 openItem.target = self
@@ -236,6 +288,11 @@ final class ShelfDragSourceNSView: NSView, NSDraggingSource {
         }
 
         return menu.items.isEmpty ? nil : menu
+    }
+
+    @objc private func handleQuickLook() {
+        guard let item = contextMenuItem else { return }
+        onQuickLookItem?(item)
     }
 
     @objc private func handleOpen() {

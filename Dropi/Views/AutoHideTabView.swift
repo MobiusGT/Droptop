@@ -9,6 +9,8 @@ struct AutoHideTabView: View {
     var body: some View {
         Group {
             switch style {
+            case .standard:
+                EmptyView()
             case .minimalColor:
                 minimalColorStrip
             case .shelfNumber:
@@ -125,8 +127,8 @@ struct AutoHideTabView: View {
                     .frame(width: 22, height: 22)
             }
 
-        case .image(let data, _, _):
-            if let img = item.thumbnail ?? NSImage(data: data) {
+        case .image:
+            if let img = item.thumbnail {
                 Image(nsImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fill)

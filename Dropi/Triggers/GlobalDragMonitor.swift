@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import QuartzCore
 import os
 
 private let dragMonitorLogger = Logger(subsystem: "com.local.Droptop", category: "GlobalDragMonitor")
@@ -87,8 +88,7 @@ struct DragSessionStateMachine {
             guard movedDistance >= Constants.Trigger.dragMovementThreshold else { return .none }
 
             let pasteboardChanged = (currentDragChangeCount != dragChangeCountAtDown) && pasteboardHasSupportedPayload()
-            let systemDragActive = hasExternalDraggingWindow()
-            guard pasteboardChanged || systemDragActive else { return .none }
+            guard pasteboardChanged || hasExternalDraggingWindow() else { return .none }
 
             isValidatedExternalDrag = true
             lastObservedDragChangeCount = currentDragChangeCount
@@ -98,8 +98,7 @@ struct DragSessionStateMachine {
         // Case B: Recovery path when leftMouseDown was swallowed by a privileged system process
         // (such as Dock.app when dragging a file out of a folder stack in the Dock).
         let pasteboardChanged = (currentDragChangeCount != lastObservedDragChangeCount) && pasteboardHasSupportedPayload()
-        let systemDragActive = hasExternalDraggingWindow()
-        if pasteboardChanged || systemDragActive {
+        if pasteboardChanged || hasExternalDraggingWindow() {
             isTrackingMouseDown = true
             isInternalSession = false
             isValidatedExternalDrag = true
@@ -144,16 +143,17 @@ struct DragSessionStateMachine {
 
 private final class EventTapBox: @unchecked Sendable {
     var tap: CFMachPort?
-    var onMouseEvent: (@Sendable (CGEventType) -> Void)?
+    var onMouseEvent: (@Sendable (CGEventType, CGFloat, CGFloat) -> Void)?
+    var onTapPermanentlyDisabled: (@Sendable () -> Void)?
 }
 
 /// Passive, zero-interference global drag monitor.
 /// - Never intercepts or blocks mouse events (safe for Finder marquee multi-select).
-/// - Works immediately without Accessibility permission via passive NSEvent monitors.
+/// - Uses a single event source: a synchronous `.listenOnly` CGEventTap on the main run loop
+///   when permitted (with timeout auto-recovery), falling back cleanly to passive NSEvent monitors
+///   whenever the tap is unavailable or disabled.
 /// - Detects drags originating from Dock folder stacks via BOTH drag-pasteboard delta
-///   AND macOS layer-500 (`CGWindowLevelForKey(.draggingWindow)`) window detection.
-/// - Also attaches a `.listenOnly` CGEventTap when permitted, explicitly re-enabling on
-///   `kCGEventTapDisabledByTimeout` / `kCGEventTapDisabledByUserInput`.
+///   AND rate-limited macOS layer-500 (`CGWindowLevelForKey(.draggingWindow)`) window detection.
 /// - Uses an active-session watchdog checking `NSEvent.pressedMouseButtons`
 ///   so drag state ALWAYS resets cleanly even if macOS suppresses a global `leftMouseUp`.
 @MainActor
@@ -180,9 +180,19 @@ final class GlobalDragMonitor {
 
     private let ownPID = ProcessInfo.processInfo.processIdentifier
     private let draggingWindowLayer = Int(CGWindowLevelForKey(.draggingWindow))
+    private let windowProbeCacheTTL: CFTimeInterval = 0.15
+    private var lastWindowProbe: (timestamp: CFTimeInterval, result: Bool) = (0, false)
 
     private var eventTapBox: EventTapBox?
     private var eventTapRunLoopSource: CFRunLoopSource?
+
+    var isMonitoringActive: Bool {
+        isStarted
+    }
+
+    var hasActiveWatchdog: Bool {
+        watchdogTimer != nil
+    }
 
     private init() {
         self.stateMachine = DragSessionStateMachine(initialDragChangeCount: dragPasteboard.changeCount)
@@ -211,34 +221,24 @@ final class GlobalDragMonitor {
     func start() {
         guard !isStarted else { return }
         isStarted = true
+        resetWindowProbeCache()
         stateMachine.syncAfterInternalDrag(currentDragChangeCount: dragPasteboard.changeCount)
 
-        let mouseMask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
-
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseMask) { [weak self] event in
-            MainActor.assumeIsolated {
-                self?.processCocoaEvent(event, isLocal: false)
-            }
+        // Prefer the listen-only CGEventTap (covers the exact same leftMouseDown/Dragged/Up
+        // mask as NSEvent monitors with zero duplicate processing). Fall back to passive
+        // NSEvent global + local monitors whenever the tap is unavailable or disabled.
+        if !installListenOnlyEventTapIfPermitted() {
+            installCocoaMonitorsIfNeeded()
         }
-
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseMask) { [weak self] event in
-            self?.processCocoaEvent(event, isLocal: true)
-            return event
-        }
-
-        installListenOnlyEventTapIfPermitted()
         startDockRecoveryProbe()
     }
 
     func stop() {
         guard isStarted else { return }
         isStarted = false
+        resetWindowProbeCache()
 
-        if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
-        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
-        globalMonitor = nil
-        localMonitor = nil
-
+        removeCocoaMonitors()
         removeEventTap()
         stopWatchdog()
         stopDockRecoveryProbe()
@@ -249,45 +249,90 @@ final class GlobalDragMonitor {
 
     func notifyDropCompletedOnShelf() {
         stopWatchdog()
+        resetWindowProbeCache()
         let transition = stateMachine.markDroppedOnShelf(currentDragChangeCount: dragPasteboard.changeCount)
         dispatch(transition, deltaX: 0, deltaY: 0)
     }
 
     func syncAfterInternalDragEnded() {
         stopWatchdog()
+        resetWindowProbeCache()
         stateMachine.syncAfterInternalDrag(currentDragChangeCount: dragPasteboard.changeCount)
     }
 
     func refreshEventTapIfNeeded() {
         guard isStarted, eventTapBox == nil else { return }
-        installListenOnlyEventTapIfPermitted()
+        if installListenOnlyEventTapIfPermitted() {
+            removeCocoaMonitors()
+        }
+    }
+
+    // MARK: - Passive NSEvent Fallback Monitors
+
+    private func installCocoaMonitorsIfNeeded() {
+        let mouseMask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
+
+        if globalMonitor == nil {
+            globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseMask) { [weak self] event in
+                MainActor.assumeIsolated {
+                    self?.processCocoaEvent(event, isLocal: false)
+                }
+            }
+        }
+
+        if localMonitor == nil {
+            localMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseMask) { [weak self] event in
+                self?.processCocoaEvent(event, isLocal: true)
+                return event
+            }
+        }
+    }
+
+    private func removeCocoaMonitors() {
+        if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
+        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
+        globalMonitor = nil
+        localMonitor = nil
     }
 
     // MARK: - System Dragging Window Detection (Layer 500 — Catches Dock Folder Stack Drags!)
+
+    private func resetWindowProbeCache() {
+        lastWindowProbe = (0, false)
+    }
 
     /// Detects active macOS CoreDrag dragging-image windows (`kCGDraggingWindowLevel` = 500)
     /// owned by external processes (such as `Dock.app` when dragging from a Dock folder stack).
     /// Finder marquee multi-select and normal window dragging NEVER create a layer-500 window.
     private func hasActiveExternalDraggingWindow() -> Bool {
-        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
-            return false
+        let now = CACurrentMediaTime()
+        if lastWindowProbe.timestamp > 0, (now - lastWindowProbe.timestamp) < windowProbeCacheTTL {
+            return lastWindowProbe.result
         }
-        for info in list {
-            guard let layer = info[kCGWindowLayer as String] as? Int,
-                  layer == draggingWindowLayer else {
-                continue
-            }
-            let pid = info[kCGWindowOwnerPID as String] as? pid_t ?? 0
-            if pid != ownPID {
-                return true
+
+        var found = false
+        if let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] {
+            for info in list {
+                guard let layer = info[kCGWindowLayer as String] as? Int,
+                      layer == draggingWindowLayer else {
+                    continue
+                }
+                let pid = info[kCGWindowOwnerPID as String] as? pid_t ?? 0
+                if pid != ownPID {
+                    found = true
+                    break
+                }
             }
         }
-        return false
+
+        lastWindowProbe = (now, found)
+        return found
     }
 
     // MARK: - Event Processing
 
     private func processCocoaEvent(_ event: NSEvent, isLocal: Bool) {
+        guard isStarted else { return }
         let location = NSEvent.mouseLocation
         switch event.type {
         case .leftMouseDown:
@@ -305,7 +350,8 @@ final class GlobalDragMonitor {
         }
     }
 
-    private func handleTapEvent(_ type: CGEventType) {
+    func handleTapEvent(_ type: CGEventType, deltaX: CGFloat = 0, deltaY: CGFloat = 0) {
+        guard isStarted else { return }
         let location = NSEvent.mouseLocation
         switch type {
         case .leftMouseDown:
@@ -313,10 +359,10 @@ final class GlobalDragMonitor {
             let isInsideOwnWindow = isPointInInteractiveOwnWindow(location)
             handleMouseDown(at: location, isLocal: isInsideOwnWindow)
         case .leftMouseDragged:
-            let dx = location.x - lastEventLocation.x
-            let dy = location.y - lastEventLocation.y
+            let resolvedDX = (deltaX != 0 || deltaY != 0) ? deltaX : (location.x - lastEventLocation.x)
+            let resolvedDY = (deltaX != 0 || deltaY != 0) ? deltaY : (location.y - lastEventLocation.y)
             lastEventLocation = location
-            handleMouseMoved(at: location, deltaX: dx, deltaY: dy)
+            handleMouseMoved(at: location, deltaX: resolvedDX, deltaY: resolvedDY)
         case .leftMouseUp:
             handleMouseUp()
         default:
@@ -324,7 +370,15 @@ final class GlobalDragMonitor {
         }
     }
 
+    private func handleTapPermanentlyDisabled() {
+        removeEventTap()
+        guard isStarted else { return }
+        dragMonitorLogger.info("Listen-only CGEventTap disabled; falling back to passive NSEvent monitors.")
+        installCocoaMonitorsIfNeeded()
+    }
+
     private func handleMouseDown(at location: NSPoint, isLocal: Bool) {
+        resetWindowProbeCache()
         lastEventLocation = location
         let isInternal = isLocal || SelfDragState.isDraggingFromShelf || isPointInInteractiveOwnWindow(location)
         let priorTransition = stateMachine.mouseDown(
@@ -367,6 +421,7 @@ final class GlobalDragMonitor {
 
     private func handleMouseUp() {
         stopWatchdog()
+        resetWindowProbeCache()
         let transition = stateMachine.mouseUp(currentDragChangeCount: dragPasteboard.changeCount)
         dispatch(transition, deltaX: 0, deltaY: 0)
     }
@@ -400,12 +455,12 @@ final class GlobalDragMonitor {
 
     private func startDockRecoveryProbe() {
         guard dockRecoveryTimer == nil else { return }
-        let timer = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
+        let timer = Timer(timeInterval: Constants.Trigger.dockDragRecoveryInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
                 self?.dockRecoveryTick()
             }
         }
-        timer.tolerance = 0.05
+        timer.tolerance = 0.15
         RunLoop.main.add(timer, forMode: .common)
         dockRecoveryTimer = timer
     }
@@ -439,10 +494,11 @@ final class GlobalDragMonitor {
     private func startWatchdog() {
         guard watchdogTimer == nil else { return }
         let timer = Timer(timeInterval: Constants.Trigger.watchdogInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 self?.watchdogTick()
             }
         }
+        timer.tolerance = 0.05
         RunLoop.main.add(timer, forMode: .common)
         watchdogTimer = timer
     }
@@ -468,18 +524,38 @@ final class GlobalDragMonitor {
 
     // MARK: - Optional Listen-Only CGEventTap
 
-    private func installListenOnlyEventTapIfPermitted() {
-        guard eventTapBox == nil else { return }
+    @discardableResult
+    private func installListenOnlyEventTapIfPermitted() -> Bool {
+        if eventTapBox != nil { return true }
 
+        // Exact 1:1 match with NSEvent mouseMask (.leftMouseDown, .leftMouseDragged, .leftMouseUp)
         let mask: CGEventMask =
             (1 << CGEventType.leftMouseDown.rawValue)
             | (1 << CGEventType.leftMouseDragged.rawValue)
             | (1 << CGEventType.leftMouseUp.rawValue)
 
         let box = EventTapBox()
-        box.onMouseEvent = { eventType in
-            DispatchQueue.main.async {
-                GlobalDragMonitor.shared.handleTapEvent(eventType)
+        // Source is added to CFRunLoopGetMain(), so callbacks execute synchronously on the main thread.
+        box.onMouseEvent = { eventType, dx, dy in
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    GlobalDragMonitor.shared.handleTapEvent(eventType, deltaX: dx, deltaY: dy)
+                }
+            } else {
+                DispatchQueue.main.async {
+                    GlobalDragMonitor.shared.handleTapEvent(eventType, deltaX: dx, deltaY: dy)
+                }
+            }
+        }
+        box.onTapPermanentlyDisabled = {
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    GlobalDragMonitor.shared.handleTapPermanentlyDisabled()
+                }
+            } else {
+                DispatchQueue.main.async {
+                    GlobalDragMonitor.shared.handleTapPermanentlyDisabled()
+                }
             }
         }
 
@@ -491,12 +567,17 @@ final class GlobalDragMonitor {
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                 if let tap = box.tap {
                     CGEvent.tapEnable(tap: tap, enable: true)
+                    if !CGEvent.tapIsEnabled(tap: tap) {
+                        box.onTapPermanentlyDisabled?()
+                    }
                 }
                 return Unmanaged.passUnretained(event)
             }
 
             if type == .leftMouseDown || type == .leftMouseDragged || type == .leftMouseUp {
-                box.onMouseEvent?(type)
+                let dx = CGFloat(event.getDoubleValueField(.mouseEventDeltaX))
+                let dy = CGFloat(event.getDoubleValueField(.mouseEventDeltaY))
+                box.onMouseEvent?(type, dx, dy)
             }
 
             return Unmanaged.passUnretained(event)
@@ -511,7 +592,7 @@ final class GlobalDragMonitor {
             userInfo: userInfo
         ) else {
             dragMonitorLogger.info("Listen-only CGEventTap unavailable; using passive NSEvent monitors + Dock drag detector.")
-            return
+            return false
         }
 
         box.tap = tap
@@ -519,9 +600,22 @@ final class GlobalDragMonitor {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
 
+        guard CGEvent.tapIsEnabled(tap: tap) else {
+            if let source {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            }
+            CFMachPortInvalidate(tap)
+            box.onMouseEvent = nil
+            box.onTapPermanentlyDisabled = nil
+            box.tap = nil
+            dragMonitorLogger.info("Listen-only CGEventTap could not be enabled; using passive NSEvent monitors.")
+            return false
+        }
+
         eventTapBox = box
         eventTapRunLoopSource = source
-        dragMonitorLogger.info("Installed listen-only CGEventTap with timeout auto-recovery.")
+        dragMonitorLogger.info("Installed listen-only CGEventTap on main run loop with automatic fallback.")
+        return true
     }
 
     private func removeEventTap() {
@@ -534,6 +628,7 @@ final class GlobalDragMonitor {
             CFMachPortInvalidate(tap)
         }
         eventTapBox?.onMouseEvent = nil
+        eventTapBox?.onTapPermanentlyDisabled = nil
         eventTapBox?.tap = nil
         eventTapBox = nil
     }

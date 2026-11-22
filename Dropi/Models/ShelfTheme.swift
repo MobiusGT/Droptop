@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 enum AutoHideTabStyle: String, CaseIterable, Identifiable, Sendable {
+    case standard
     case fileIcons
     case shelfNumber
     case minimalColor
@@ -10,14 +11,16 @@ enum AutoHideTabStyle: String, CaseIterable, Identifiable, Sendable {
 
     var displayName: String {
         switch self {
-        case .fileIcons: return "File Icons"
+        case .standard: return "Standard"
+        case .fileIcons: return "Icons"
         case .shelfNumber: return "Shelf Number"
-        case .minimalColor: return "Color Only"
+        case .minimalColor: return "Handle Bar"
         }
     }
 
     var systemImage: String {
         switch self {
+        case .standard: return "sidebar.right"
         case .fileIcons: return "square.grid.2x2.fill"
         case .shelfNumber: return "number.square.fill"
         case .minimalColor: return "rectangle.portrait.fill"
@@ -26,11 +29,29 @@ enum AutoHideTabStyle: String, CaseIterable, Identifiable, Sendable {
 
     var collapsedWidth: CGFloat {
         switch self {
+        case .standard: return Constants.Shelf.defaultAutoHideWidth
         case .minimalColor: return 26
         case .shelfNumber: return 54
         case .fileIcons: return 54
         }
     }
+
+    var usesCustomTabOverlay: Bool {
+        self != .standard
+    }
+}
+
+enum ThemeColorFamily: String, CaseIterable, Hashable, Sendable {
+    case glass
+    case red
+    case orange
+    case yellow
+    case green
+    case teal
+    case blue
+    case purple
+    case pink
+    case neutral
 }
 
 enum ColorVariationLevel: String, CaseIterable, Identifiable, Sendable {
@@ -166,11 +187,15 @@ private struct ThemeSpec: Sendable {
     }
 }
 
-/// 100 curated macOS shelf themes (1 Adaptive + 50 Dark + 49 Light),
-/// separated cleanly into Dark & Light modes and sorted smoothly across the color spectrum.
+/// Curated macOS shelf themes (5 Adaptive + 50 Dark + 50 Light),
+/// separated cleanly into Adaptive, Dark & Light modes and sorted smoothly across the color spectrum.
 enum ShelfTheme: String, CaseIterable, Identifiable, Sendable {
-    // Adaptive (1)
+    // Adaptive (5)
     case systemGlass
+    case random
+    case randomLight
+    case randomDark
+    case randomSystem
 
     // Dark themes (50)
     case midnight, graphite, obsidianGold, ocean, forest, sunsetEmber, lavenderDusk, nordicFrost
@@ -194,10 +219,27 @@ enum ShelfTheme: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    static let adaptiveThemes: [ShelfTheme] = [
+        .systemGlass, .random, .randomLight, .randomDark, .randomSystem
+    ]
+
+    var isRandomTheme: Bool {
+        switch self {
+        case .random, .randomLight, .randomDark, .randomSystem:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var isAdaptiveOption: Bool {
+        self == .systemGlass || isRandomTheme
+    }
+
     /// All 50 dark themes sorted smoothly by color spectrum (Red → Orange → Yellow → Green → Teal → Blue → Purple → Pink → Neutral).
     static let darkThemes: [ShelfTheme] = {
         allCases
-            .filter { $0 != .systemGlass && !$0.isLightTheme }
+            .filter { !$0.isAdaptiveOption && !$0.isLightTheme }
             .sorted { lhs, rhs in
                 guard let ls = lhs.spec, let rs = rhs.spec else { return false }
                 let lk = ls.colorSortKey
@@ -211,7 +253,7 @@ enum ShelfTheme: String, CaseIterable, Identifiable, Sendable {
     /// All 50 light themes sorted smoothly by color spectrum (Red → Orange → Yellow → Green → Teal → Blue → Purple → Pink → Neutral).
     static let lightThemes: [ShelfTheme] = {
         allCases
-            .filter { $0.isLightTheme }
+            .filter { !$0.isAdaptiveOption && $0.isLightTheme }
             .sorted { lhs, rhs in
                 guard let ls = lhs.spec, let rs = rhs.spec else { return false }
                 let lk = ls.colorSortKey
@@ -222,9 +264,73 @@ enum ShelfTheme: String, CaseIterable, Identifiable, Sendable {
             }
     }()
 
+    /// All 101 concrete themes (System Glass + 50 Dark + 50 Light), excluding random-mode options.
+    static let concreteThemes: [ShelfTheme] = [.systemGlass] + darkThemes + lightThemes
+
+    @MainActor
+    static var isSystemDarkMode: Bool {
+        if let app = NSApp {
+            return app.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        }
+        return UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+    }
+
+    /// Returns the concrete pool of eligible themes when this theme is one of the 4 Random modes.
+    func eligibleRandomThemes(isSystemDarkMode: Bool) -> [ShelfTheme] {
+        switch self {
+        case .random:
+            return Self.concreteThemes
+        case .randomDark:
+            return isSystemDarkMode ? ([.systemGlass] + Self.darkThemes) : Self.darkThemes
+        case .randomLight:
+            return isSystemDarkMode ? Self.lightThemes : ([.systemGlass] + Self.lightThemes)
+        case .randomSystem:
+            let base = isSystemDarkMode ? Self.darkThemes : Self.lightThemes
+            return [.systemGlass] + base
+        default:
+            return [self]
+        }
+    }
+
+    /// Explicit color family classification so random selection avoids picking consecutive
+    /// or concurrent shelves from the same color family.
+    var colorFamily: ThemeColorFamily {
+        switch self {
+        case .systemGlass, .random, .randomLight, .randomDark, .randomSystem:
+            return .glass
+        case .crimsonVelvet, .garnetDark, .scarletNight, .cherryCola, .rustIron, .sunsetEmber,
+             .rosePetal, .strawberryCream, .coralBlush, .apricotLinen, .terracottaMist:
+            return .red
+        case .burntSienna, .volcanicAsh, .cinnamonDark, .coffeeEspresso, .amberGlow, .marigoldNight,
+             .peachSorbet, .warmPaper, .sandstone, .tangerineIce, .cantaloupe, .amberSilk, .solarSand:
+            return .orange
+        case .obsidianGold, .honeyGold, .citrineDark, .chartreuseNight,
+             .marigoldCream, .buttercream, .vanillaBean, .honeydewGold, .lemonFizz, .chartreuseMist:
+            return .yellow
+        case .matchaDark, .oliveBunker, .terminalGreen, .pineShadow, .forest, .jadeVelvet, .emeraldNight, .mintMidnight,
+             .pistachio, .matchaLatte, .meadowLight, .cloverLight, .sageMist, .eucalyptus:
+            return .green
+        case .copperPatina, .abyssTeal, .ocean, .lagoonDark, .arcticCyan, .nordicFrost,
+             .mintCream, .glacierMint, .turquoiseSilk, .seafoam, .lagoonMist, .aquaGlass:
+            return .teal
+        case .cobaltSteel, .marineDepth, .denimNight, .sapphireDark, .midnight, .starlightBlue, .deepIndigo,
+             .ceruleanMist, .skyGlass, .powderBlue, .denimWash, .cornflower, .icePeriwinkle:
+            return .blue
+        case .lavenderDusk, .cosmicViolet, .amethyst, .royalPlum, .mulberryDark,
+             .irisLight, .lavenderCream, .wisteria, .lilacCloud, .orchidMilk:
+            return .purple
+        case .cyberNeon, .fuchsiaNight, .velvetBerry, .hibiscusDark, .rosewood,
+             .peonyLight, .cottonCandy, .raspberrySorbet, .blushQuartz, .sakuraMilk:
+            return .pink
+        case .noirMonochrome, .graphite, .slateSteel,
+             .frostedLight, .alabaster, .linenSilver, .cloudGray:
+            return .neutral
+        }
+    }
+
     private var spec: ThemeSpec? {
         switch self {
-        case .systemGlass:
+        case .systemGlass, .random, .randomLight, .randomDark, .randomSystem:
             return nil
 
         // MARK: Dark Themes (50)
@@ -468,7 +574,14 @@ enum ShelfTheme: String, CaseIterable, Identifiable, Sendable {
     }
 
     var displayName: String {
-        spec?.displayName ?? "System Glass"
+        switch self {
+        case .systemGlass: return "System Glass"
+        case .random: return "Random"
+        case .randomLight: return "Random Light"
+        case .randomDark: return "Random Dark"
+        case .randomSystem: return "Random System"
+        default: return spec?.displayName ?? "System Glass"
+        }
     }
 
     var isLightTheme: Bool {
@@ -476,13 +589,25 @@ enum ShelfTheme: String, CaseIterable, Identifiable, Sendable {
     }
 
     var preferredColorScheme: ColorScheme? {
-        guard let spec else { return nil }
-        return spec.isLight ? .light : .dark
+        switch self {
+        case .randomLight: return .light
+        case .randomDark: return .dark
+        case .systemGlass, .random, .randomSystem: return nil
+        default:
+            guard let spec else { return nil }
+            return spec.isLight ? .light : .dark
+        }
     }
 
     var nsAppearance: NSAppearance? {
-        guard let spec else { return nil }
-        return spec.isLight ? NSAppearance(named: .aqua) : NSAppearance(named: .darkAqua)
+        switch self {
+        case .randomLight: return NSAppearance(named: .aqua)
+        case .randomDark: return NSAppearance(named: .darkAqua)
+        case .systemGlass, .random, .randomSystem: return nil
+        default:
+            guard let spec else { return nil }
+            return spec.isLight ? NSAppearance(named: .aqua) : NSAppearance(named: .darkAqua)
+        }
     }
 
     var nsAccentColor: NSColor {
@@ -504,10 +629,58 @@ enum ShelfTheme: String, CaseIterable, Identifiable, Sendable {
         palette(variation: .identity, level: .off).borderColor
     }
 
+    private struct PaletteCacheKey: Hashable {
+        let theme: ShelfTheme
+        let variation: ShelfColorVariation
+        let level: ColorVariationLevel
+    }
+
+    @MainActor
+    private final class PaletteCache {
+        static let shared = PaletteCache()
+        private var entries: [PaletteCacheKey: ResolvedShelfPalette] = [:]
+        private var observer: NSObjectProtocol?
+
+        private init() {
+            observer = NotificationCenter.default.addObserver(
+                forName: NSColor.systemColorsDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.entries.removeAll()
+                }
+            }
+        }
+
+        func palette(for key: PaletteCacheKey, builder: () -> ResolvedShelfPalette) -> ResolvedShelfPalette {
+            if let cached = entries[key] {
+                return cached
+            }
+            if entries.count >= 128 {
+                entries.removeAll(keepingCapacity: true)
+            }
+            let built = builder()
+            entries[key] = built
+            return built
+        }
+    }
+
     /// Resolves the final shelf palette scaled by `ColorVariationLevel` (Off = 0x, Low = 1x, Medium = 2x, High = 3x).
     func palette(
         variation: ShelfColorVariation = .identity,
         level: ColorVariationLevel = .off
+    ) -> ResolvedShelfPalette {
+        let effectiveVariation = (level == .off) ? .identity : variation
+        let key = PaletteCacheKey(theme: self, variation: effectiveVariation, level: level)
+        return PaletteCache.shared.palette(for: key) {
+            buildPalette(variation: effectiveVariation, level: level)
+        }
+    }
+
+    private func buildPalette(
+        variation: ShelfColorVariation,
+        level: ColorVariationLevel
     ) -> ResolvedShelfPalette {
         let scale = (variation == .identity) ? 0.0 : level.multiplier
 
@@ -533,9 +706,9 @@ enum ShelfTheme: String, CaseIterable, Identifiable, Sendable {
             }
             return ResolvedShelfPalette(
                 isSystemGlass: true,
-                isLightTheme: false,
-                preferredColorScheme: nil,
-                nsAppearance: nil,
+                isLightTheme: self == .randomLight,
+                preferredColorScheme: self.preferredColorScheme,
+                nsAppearance: self.nsAppearance,
                 backgroundTint: glassTint,
                 primaryTextColor: .primary,
                 secondaryTextColor: .secondary,
@@ -649,5 +822,64 @@ enum ShelfTheme: String, CaseIterable, Identifiable, Sendable {
         let newB = min(max(b + brightDelta, minBrightness), maxBrightness)
 
         return NSColor(hue: newH, saturation: newS, brightness: newB, alpha: a)
+    }
+}
+
+/// Stateful random-theme selector that guarantees consecutive and concurrent shelves
+/// avoid repeating the same color family while automatically resetting cycles so users
+/// can never run out of color families.
+@MainActor
+final class ShelfThemeRandomPicker {
+    private var recentFamilies: Set<ThemeColorFamily> = []
+    private var lastPickedFamily: ThemeColorFamily?
+
+    func reset() {
+        recentFamilies.removeAll()
+        lastPickedFamily = nil
+    }
+
+    func pickTheme(
+        for mode: ShelfTheme,
+        activeThemes: [ShelfTheme],
+        isSystemDarkMode: Bool? = nil
+    ) -> ShelfTheme {
+        let resolvedDarkMode = isSystemDarkMode ?? ShelfTheme.isSystemDarkMode
+        let pool = mode.eligibleRandomThemes(isSystemDarkMode: resolvedDarkMode)
+        guard !pool.isEmpty else { return .systemGlass }
+        guard mode.isRandomTheme else { return mode }
+
+        let poolFamilies = Set(pool.map(\.colorFamily))
+
+        // 1. Prioritize color families with the lowest occupancy among currently open shelves.
+        //    While unused families remain, minOpenCount == 0 (zero duplicate families on screen).
+        //    Once all families are open on screen, minOpenCount advances (1, 2, …) so users can never run out.
+        var openFamilyCounts: [ThemeColorFamily: Int] = [:]
+        for theme in activeThemes {
+            openFamilyCounts[theme.colorFamily, default: 0] += 1
+        }
+        let minOpenCount = poolFamilies.map { openFamilyCounts[$0, default: 0] }.min() ?? 0
+        let leastUsedOpenFamilies = poolFamilies.filter { openFamilyCounts[$0, default: 0] == minOpenCount }
+
+        // 2. Also avoid recently picked families across sequential single-shelf opens.
+        //    When a full cycle completes, reset recent history (retaining only the immediately
+        //    preceding family so wrap-around never picks the same color family twice in a row).
+        var candidateFamilies = leastUsedOpenFamilies.subtracting(recentFamilies)
+        if candidateFamilies.isEmpty {
+            recentFamilies.removeAll()
+            candidateFamilies = leastUsedOpenFamilies
+            if let last = lastPickedFamily, candidateFamilies.count > 1 {
+                candidateFamilies.remove(last)
+            }
+        }
+
+        let familyMatchedThemes = pool.filter { candidateFamilies.contains($0.colorFamily) }
+        let openThemeSet = Set(activeThemes)
+        let freshThemes = familyMatchedThemes.filter { !openThemeSet.contains($0) }
+        let finalCandidates = freshThemes.isEmpty ? familyMatchedThemes : freshThemes
+
+        let chosen = finalCandidates.randomElement() ?? pool[0]
+        recentFamilies.insert(chosen.colorFamily)
+        lastPickedFamily = chosen.colorFamily
+        return chosen
     }
 }

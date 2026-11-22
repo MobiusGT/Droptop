@@ -6,6 +6,49 @@ enum ScreenEdge: String, CaseIterable, Sendable {
     case right
 }
 
+/// Controls how close to the left or right screen edge a drag must reach to summon a new shelf.
+enum EdgeCreationSensitivity: String, CaseIterable, Identifiable, Sendable {
+    case low
+    case medium
+    case high
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        }
+    }
+
+    /// Distance from an outer screen edge that triggers a new shelf.
+    /// - Low: original 20 pt zone
+    /// - Medium: ~10% of shelf width (~Handle Bar auto-hide width, 28 pt)
+    /// - High: ~20% of shelf width (~Shelf Number auto-hide width, 56 pt)
+    var outerEdgeZone: CGFloat {
+        switch self {
+        case .low: return Constants.Trigger.outerEdgeZone
+        case .medium: return (Constants.Shelf.width * 0.10).rounded()
+        case .high: return (Constants.Shelf.width * 0.20).rounded()
+        }
+    }
+
+    /// Distance from a shared edge between adjacent displays (kept tighter for smooth cross-monitor drags).
+    var sharedEdgeZone: CGFloat {
+        switch self {
+        case .low: return Constants.Trigger.sharedEdgeZone
+        case .medium: return 12.0
+        case .high: return 18.0
+        }
+    }
+
+    /// Distance the cursor must move away from a previously triggered edge before re-arming.
+    var rearmDistance: CGFloat {
+        max(Constants.Trigger.rearmDistance, outerEdgeZone + 50.0)
+    }
+}
+
 enum Constants {
     enum Shelf {
         static let width: CGFloat = 282
@@ -32,9 +75,8 @@ enum Constants {
             return min(max(raw, minPopulatedHeight), maxPopulatedHeight)
         }
 
-        static func autoHideVisibleWidth(prettyTab: Bool, style: AutoHideTabStyle) -> CGFloat {
-            guard prettyTab else { return defaultAutoHideWidth }
-            return style.collapsedWidth
+        static func autoHideVisibleWidth(style: AutoHideTabStyle) -> CGFloat {
+            style.collapsedWidth
         }
     }
 
@@ -48,12 +90,12 @@ enum Constants {
         static let sharedEdgeDwell: TimeInterval = 0.25
         static let rearmDistance: CGFloat = 70.0
         static let indicatorProximityZone: CGFloat = 240.0
-        static let watchdogInterval: TimeInterval = 0.05
-        static let dockDragRecoveryInterval: TimeInterval = 0.15
+        static let watchdogInterval: TimeInterval = 0.10
+        static let dockDragRecoveryInterval: TimeInterval = 0.25
     }
 
     enum Thumbnail {
-        static let size = CGSize(width: 96, height: 96)
+        nonisolated static let size = CGSize(width: 96, height: 96)
     }
 }
 

@@ -7,11 +7,23 @@ enum SelfDragState {
     static var isDraggingFromShelf: Bool = false
     static var sourceShelfID: UUID?
     static var activeSessionCount: Int = 0
+    static var adoptedStagedSourcePaths: Set<String> = []
 
     static func begin(fromShelf shelfID: UUID) {
         activeSessionCount += 1
         isDraggingFromShelf = true
         sourceShelfID = shelfID
+        adoptedStagedSourcePaths.removeAll()
+    }
+
+    static func recordAdoptedStagedSourcePath(_ path: String) {
+        adoptedStagedSourcePaths.insert(path)
+    }
+
+    static func consumeAdoptedStagedSourcePaths() -> Set<String> {
+        let paths = adoptedStagedSourcePaths
+        adoptedStagedSourcePaths.removeAll()
+        return paths
     }
 
     static func end() {
@@ -19,6 +31,7 @@ enum SelfDragState {
         isDraggingFromShelf = activeSessionCount > 0
         if !isDraggingFromShelf {
             sourceShelfID = nil
+            adoptedStagedSourcePaths.removeAll()
         }
     }
 }
@@ -60,32 +73,10 @@ final class ShelfItemPromiseDelegate: NSObject, NSFilePromiseProviderDelegate, @
         completionHandler: @escaping ((any Error)?) -> Void
     ) {
         do {
-            try Self.write(kind: kind, to: url)
+            try ShelfItem.writeExportData(kind: kind, to: url, allowOverwrite: false)
             completionHandler(nil)
         } catch {
             completionHandler(error)
-        }
-    }
-
-    private nonisolated static func write(kind: ShelfItemKind, to destinationURL: URL) throws {
-        switch kind {
-        case .file(let sourceURL, _), .folder(let sourceURL):
-            if FileManager.default.fileExists(atPath: destinationURL.path) {
-                try FileManager.default.removeItem(at: destinationURL)
-            }
-            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-        case .image(let data, _, _):
-            try data.write(to: destinationURL, options: .atomic)
-        case .webURL(let url, _):
-            let plist: [String: Any] = ["URL": url.absoluteString]
-            let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-            try data.write(to: destinationURL, options: .atomic)
-        case .text(let plain, let rtfData, _):
-            if let rtfData {
-                try rtfData.write(to: destinationURL, options: .atomic)
-            } else {
-                try Data(plain.utf8).write(to: destinationURL, options: .atomic)
-            }
         }
     }
 }
@@ -197,7 +188,7 @@ enum ShelfItemDragWriter {
         for (index, item) in items.enumerated() {
             let writer: any NSPasteboardWriting
             switch item.kind {
-            case .file(let url, _), .folder(let url):
+            case .file(let url, _), .folder(let url, _):
                 writer = url as NSURL
             case .image, .webURL, .text:
                 writer = ShelfFilePromiseProvider(kind: item.kind, suggestedFilename: item.suggestedExportFilename)
@@ -237,7 +228,7 @@ enum ShelfItemDragWriter {
             return icon
 
         case .image(let data, _, _):
-            if let img = NSImage(data: data) {
+            if let img = ThumbnailGenerator.downsampledImage(from: data, maxPixelSize: 104) {
                 return renderBadgeImage(size: targetSize) { rect in
                     NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9).addClip()
                     img.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)

@@ -53,13 +53,14 @@ final class FilenameTooltipController {
         text: String,
         token: UUID,
         shelfScreenRect: NSRect,
+        theme: ShelfTheme? = nil,
         colorVariation: ShelfColorVariation = .identity
     ) {
         cancelPending()
         activeToken = token
 
         let work = DispatchWorkItem { [weak self] in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self, self.activeToken == token else { return }
                 guard NSEvent.pressedMouseButtons == 0 else { return }
                 let cursor = NSEvent.mouseLocation
@@ -68,6 +69,7 @@ final class FilenameTooltipController {
                     text: text,
                     cursorPoint: cursor,
                     shelfScreenRect: shelfScreenRect,
+                    theme: theme,
                     colorVariation: colorVariation
                 )
             }
@@ -94,10 +96,12 @@ final class FilenameTooltipController {
         text: String,
         cursorPoint: NSPoint,
         shelfScreenRect: NSRect,
+        theme: ShelfTheme?,
         colorVariation: ShelfColorVariation
     ) {
         let settings = AppSettings.shared
-        let palette = settings.shelfTheme.palette(
+        let resolvedTheme = theme ?? settings.shelfTheme
+        let palette = resolvedTheme.palette(
             variation: colorVariation,
             level: settings.colorVariationLevel
         )

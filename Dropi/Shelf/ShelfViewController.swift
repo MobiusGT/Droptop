@@ -7,18 +7,18 @@ final class ShelfViewController: NSHostingController<ShelfContentView> {
         store: ShelfStore,
         dropHighlight: ShelfDropHighlightState,
         onRequestClose: @escaping () -> Void,
-        onRequestNewShelf: @escaping () -> Void,
-        onRequestSettings: @escaping () -> Void,
-        onRequestResize: @escaping (CGFloat) -> Void
+        onRequestResize: @escaping (CGFloat) -> Void,
+        onRequestQuickLook: @escaping (ShelfItem) -> Void,
+        onSelectionInteraction: @escaping () -> Void
     ) {
         super.init(
             rootView: ShelfContentView(
                 store: store,
                 dropHighlight: dropHighlight,
                 onRequestClose: onRequestClose,
-                onRequestNewShelf: onRequestNewShelf,
-                onRequestSettings: onRequestSettings,
-                onRequestResize: onRequestResize
+                onRequestResize: onRequestResize,
+                onRequestQuickLook: onRequestQuickLook,
+                onSelectionInteraction: onSelectionInteraction
             )
         )
         // CRITICAL: Prevent NSHostingController from propagating SwiftUI child widths onto

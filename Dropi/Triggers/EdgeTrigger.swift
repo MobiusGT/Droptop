@@ -3,20 +3,34 @@ import Foundation
 
 @MainActor
 final class EdgeTrigger: ShelfTrigger {
+    private struct CachedScreenMetrics {
+        let screen: NSScreen
+        let frame: NSRect
+        let visibleFrame: NSRect
+        let hasLeftAdjacent: Bool
+        let hasRightAdjacent: Bool
+    }
+
     var isEnabled: Bool = true
     var onTrigger: ((TriggerEvent) -> Void)?
     var onDragEnded: ((Bool) -> Void)?
 
     private var observerID: UUID?
+    private var screenParamsObserver: NSObjectProtocol?
     private var dwellTimer: Timer?
     private var pendingEdge: ScreenEdge?
     private var pendingScreen: NSScreen?
     private var triggeredEdgeForCurrentVisit: ScreenEdge?
 
+    // Pooled indicator windows reused across drags (released on stop()).
     private var leftIndicator: EdgeIndicatorWindow?
     private var rightIndicator: EdgeIndicatorWindow?
     private var indicatorScreen: NSScreen?
     private var indicatorsVisible = false
+
+    // Per-drag display geometry cache (invalidated on drag end & screen parameter changes).
+    private var cachedScreens: [CachedScreenMetrics] = []
+    private var lastMatchedScreenIndex: Int?
 
     func start() {
         guard observerID == nil else { return }
@@ -31,6 +45,15 @@ final class EdgeTrigger: ShelfTrigger {
                 self?.handleDragEnded(droppedOnShelf: droppedOnShelf)
             }
         )
+        screenParamsObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.invalidateScreenCache()
+            }
+        }
     }
 
     func stop() {
@@ -38,6 +61,23 @@ final class EdgeTrigger: ShelfTrigger {
             GlobalDragMonitor.shared.removeObserver(id: observerID)
             self.observerID = nil
         }
+        if let screenParamsObserver {
+            NotificationCenter.default.removeObserver(screenParamsObserver)
+            self.screenParamsObserver = nil
+        }
+        cancelDwell()
+        hideIndicators()
+        leftIndicator?.orderOut(nil)
+        leftIndicator?.close()
+        leftIndicator = nil
+        rightIndicator?.orderOut(nil)
+        rightIndicator?.close()
+        rightIndicator = nil
+        invalidateScreenCache()
+        triggeredEdgeForCurrentVisit = nil
+    }
+
+    func cancelActiveEdgeSession() {
         cancelDwell()
         hideIndicators()
         triggeredEdgeForCurrentVisit = nil
@@ -48,11 +88,12 @@ final class EdgeTrigger: ShelfTrigger {
     private func handleDragBegan(at location: NSPoint) {
         triggeredEdgeForCurrentVisit = nil
         cancelDwell()
+        refreshScreenCache()
 
         guard isEnabled, AppSettings.shared.edgeEnabled else { return }
         if AppSettings.shared.showEdgeIndicators,
-           let screen = ScreenGeometry.screen(containing: location) {
-            showIndicators(on: screen, nearY: location.y)
+           let metrics = cachedMetrics(containing: location) {
+            showIndicators(on: metrics, at: location)
         }
         evaluateEdge(at: location)
     }
@@ -69,29 +110,88 @@ final class EdgeTrigger: ShelfTrigger {
     private func handleDragEnded(droppedOnShelf: Bool) {
         cancelDwell()
         hideIndicators()
+        invalidateScreenCache()
         triggeredEdgeForCurrentVisit = nil
         onDragEnded?(droppedOnShelf)
+    }
+
+    // MARK: - Per-Drag Screen Geometry Cache
+
+    private func refreshScreenCache() {
+        let screens = NSScreen.screens
+        cachedScreens = screens.map { screen in
+            CachedScreenMetrics(
+                screen: screen,
+                frame: screen.frame,
+                visibleFrame: screen.visibleFrame,
+                hasLeftAdjacent: ScreenGeometry.hasAdjacentScreen(to: screen, on: .left),
+                hasRightAdjacent: ScreenGeometry.hasAdjacentScreen(to: screen, on: .right)
+            )
+        }
+        lastMatchedScreenIndex = nil
+    }
+
+    private func invalidateScreenCache() {
+        cachedScreens.removeAll()
+        lastMatchedScreenIndex = nil
+    }
+
+    private func cachedMetrics(containing point: NSPoint) -> CachedScreenMetrics? {
+        if cachedScreens.isEmpty {
+            refreshScreenCache()
+        }
+        guard !cachedScreens.isEmpty else { return nil }
+
+        if let lastIndex = lastMatchedScreenIndex,
+           lastIndex < cachedScreens.count,
+           NSMouseInRect(point, cachedScreens[lastIndex].frame, false) {
+            return cachedScreens[lastIndex]
+        }
+
+        if let exactIndex = cachedScreens.firstIndex(where: { NSMouseInRect(point, $0.frame, false) }) {
+            lastMatchedScreenIndex = exactIndex
+            return cachedScreens[exactIndex]
+        }
+
+        var bestIndex = 0
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+        for (index, metrics) in cachedScreens.enumerated() {
+            let rect = metrics.frame
+            let clampedX = min(max(point.x, rect.minX), rect.maxX)
+            let clampedY = min(max(point.y, rect.minY), rect.maxY)
+            let dx = point.x - clampedX
+            let dy = point.y - clampedY
+            let distSq = dx * dx + dy * dy
+            if distSq < bestDistance {
+                bestDistance = distSq
+                bestIndex = index
+            }
+        }
+        lastMatchedScreenIndex = bestIndex
+        return cachedScreens[bestIndex]
     }
 
     // MARK: - Edge Detection
 
     private func evaluateEdge(at location: NSPoint) {
-        guard let screen = ScreenGeometry.screen(containing: location) else { return }
+        guard let metrics = cachedMetrics(containing: location) else { return }
 
         if AppSettings.shared.showEdgeIndicators && triggeredEdgeForCurrentVisit == nil {
-            if !indicatorsVisible || indicatorScreen != screen {
-                showIndicators(on: screen, nearY: location.y)
+            if !indicatorsVisible || indicatorScreen != metrics.screen {
+                showIndicators(on: metrics, at: location)
+            } else {
+                updateIndicatorProximity(location: location, metrics: metrics)
             }
-            updateIndicatorProximity(location: location, screen: screen)
         }
 
-        let distToLeft = location.x - screen.frame.minX
-        let distToRight = screen.frame.maxX - location.x
+        let distToLeft = location.x - metrics.frame.minX
+        let distToRight = metrics.frame.maxX - location.x
 
         // Rearm if cursor moved far enough away from previously triggered edge
+        let sensitivity = AppSettings.shared.edgeCreationSensitivity
         if let triggered = triggeredEdgeForCurrentVisit {
             let awayDistance = triggered == .left ? distToLeft : distToRight
-            if awayDistance > Constants.Trigger.rearmDistance {
+            if awayDistance > sensitivity.rearmDistance {
                 triggeredEdgeForCurrentVisit = nil
             } else {
                 cancelDwell()
@@ -99,46 +199,53 @@ final class EdgeTrigger: ShelfTrigger {
             }
         }
 
-        if let (edge, dwellDuration) = matchedEdge(
+        if let (edge, dwellDuration) = Self.evaluateMatchedEdge(
             distToLeft: distToLeft,
             distToRight: distToRight,
-            screen: screen
+            hasLeftAdjacent: metrics.hasLeftAdjacent,
+            hasRightAdjacent: metrics.hasRightAdjacent,
+            leftAllowed: AppSettings.shared.isEdgeAllowed(.left),
+            rightAllowed: AppSettings.shared.isEdgeAllowed(.right),
+            sensitivity: sensitivity
         ) {
-            scheduleDwell(edge: edge, screen: screen, duration: dwellDuration)
+            scheduleDwell(edge: edge, screen: metrics.screen, duration: dwellDuration)
         } else {
             cancelDwell()
         }
     }
 
-    private func matchedEdge(
+    static func evaluateMatchedEdge(
         distToLeft: CGFloat,
         distToRight: CGFloat,
-        screen: NSScreen
+        hasLeftAdjacent: Bool,
+        hasRightAdjacent: Bool,
+        leftAllowed: Bool,
+        rightAllowed: Bool,
+        sensitivity: EdgeCreationSensitivity
     ) -> (ScreenEdge, TimeInterval)? {
-        let settings = AppSettings.shared
+        let outerZone = sensitivity.outerEdgeZone
+        let sharedZone = sensitivity.sharedEdgeZone
 
-        if settings.isEdgeAllowed(.left) {
-            let isShared = ScreenGeometry.hasAdjacentScreen(to: screen, on: .left)
-            if isShared {
-                if distToLeft <= Constants.Trigger.sharedEdgeZone {
+        if leftAllowed {
+            if hasLeftAdjacent {
+                if distToLeft <= sharedZone {
                     return (.left, Constants.Trigger.sharedEdgeDwell)
                 }
             } else if distToLeft <= Constants.Trigger.outerEdgeImmediateZone {
                 return (.left, Constants.Trigger.outerImmediateDwell)
-            } else if distToLeft <= Constants.Trigger.outerEdgeZone {
+            } else if distToLeft <= outerZone {
                 return (.left, Constants.Trigger.outerNormalDwell)
             }
         }
 
-        if settings.isEdgeAllowed(.right) {
-            let isShared = ScreenGeometry.hasAdjacentScreen(to: screen, on: .right)
-            if isShared {
-                if distToRight <= Constants.Trigger.sharedEdgeZone {
+        if rightAllowed {
+            if hasRightAdjacent {
+                if distToRight <= sharedZone {
                     return (.right, Constants.Trigger.sharedEdgeDwell)
                 }
             } else if distToRight <= Constants.Trigger.outerEdgeImmediateZone {
                 return (.right, Constants.Trigger.outerImmediateDwell)
-            } else if distToRight <= Constants.Trigger.outerEdgeZone {
+            } else if distToRight <= outerZone {
                 return (.right, Constants.Trigger.outerNormalDwell)
             }
         }
@@ -156,7 +263,7 @@ final class EdgeTrigger: ShelfTrigger {
         pendingScreen = screen
 
         let timer = Timer(timeInterval: duration, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 let fallbackScreen = self.pendingScreen
                 self.dwellTimer = nil
@@ -166,7 +273,9 @@ final class EdgeTrigger: ShelfTrigger {
                 // Verify mouse is still pressed and still near the screen edge
                 guard (NSEvent.pressedMouseButtons & 1) != 0 else { return }
                 let currentLocation = NSEvent.mouseLocation
-                guard let currentScreen = ScreenGeometry.screen(containing: currentLocation) ?? fallbackScreen else {
+                guard let currentScreen = self.cachedMetrics(containing: currentLocation)?.screen
+                    ?? ScreenGeometry.screen(containing: currentLocation)
+                    ?? fallbackScreen else {
                     return
                 }
 
@@ -186,54 +295,92 @@ final class EdgeTrigger: ShelfTrigger {
         pendingScreen = nil
     }
 
-    // MARK: - Edge Glow Indicators
+    // MARK: - Pooled Edge Glow Indicators
 
-    private func showIndicators(on screen: NSScreen, nearY y: CGFloat) {
-        hideIndicators()
+    private func showIndicators(on metrics: CachedScreenMetrics, at location: NSPoint) {
         let settings = AppSettings.shared
-        guard settings.showEdgeIndicators else { return }
+        guard settings.showEdgeIndicators else {
+            hideIndicators()
+            return
+        }
 
-        indicatorScreen = screen
+        indicatorScreen = metrics.screen
         indicatorsVisible = true
 
+        let zone = Constants.Trigger.indicatorProximityZone
+        let distToLeft = location.x - metrics.frame.minX
+        let distToRight = metrics.frame.maxX - location.x
+
         if settings.isEdgeAllowed(.left) {
-            let left = EdgeIndicatorWindow(edge: .left, screen: screen, centerY: y)
-            left.fadeIn()
-            leftIndicator = left
+            let left: EdgeIndicatorWindow
+            if let existing = leftIndicator {
+                left = existing
+            } else {
+                left = EdgeIndicatorWindow(edge: .left, screen: metrics.screen, centerY: location.y)
+                leftIndicator = left
+            }
+            left.repositionVertically(
+                around: location.y,
+                screenFrame: metrics.frame,
+                visibleFrame: metrics.visibleFrame,
+                force: true
+            )
+            let proximity = distToLeft < zone ? (1.0 - distToLeft / zone) : 0
+            left.fadeIn(initialProximity: proximity)
+        } else {
+            leftIndicator?.fadeOut()
         }
+
         if settings.isEdgeAllowed(.right) {
-            let right = EdgeIndicatorWindow(edge: .right, screen: screen, centerY: y)
-            right.fadeIn()
-            rightIndicator = right
+            let right: EdgeIndicatorWindow
+            if let existing = rightIndicator {
+                right = existing
+            } else {
+                right = EdgeIndicatorWindow(edge: .right, screen: metrics.screen, centerY: location.y)
+                rightIndicator = right
+            }
+            right.repositionVertically(
+                around: location.y,
+                screenFrame: metrics.frame,
+                visibleFrame: metrics.visibleFrame,
+                force: true
+            )
+            let proximity = distToRight < zone ? (1.0 - distToRight / zone) : 0
+            right.fadeIn(initialProximity: proximity)
+        } else {
+            rightIndicator?.fadeOut()
         }
     }
 
     private func hideIndicators() {
         indicatorsVisible = false
         indicatorScreen = nil
-
-        let oldLeft = leftIndicator
-        let oldRight = rightIndicator
-        leftIndicator = nil
-        rightIndicator = nil
-
-        oldLeft?.fadeOut()
-        oldRight?.fadeOut()
+        leftIndicator?.fadeOut()
+        rightIndicator?.fadeOut()
     }
 
-    private func updateIndicatorProximity(location: NSPoint, screen: NSScreen) {
+    private func updateIndicatorProximity(location: NSPoint, metrics: CachedScreenMetrics) {
+        let settings = AppSettings.shared
         let zone = Constants.Trigger.indicatorProximityZone
-        let distToLeft = location.x - screen.frame.minX
-        let distToRight = screen.frame.maxX - location.x
+        let distToLeft = location.x - metrics.frame.minX
+        let distToRight = metrics.frame.maxX - location.x
 
-        if let leftIndicator {
-            leftIndicator.repositionVertically(around: location.y, on: screen)
+        if settings.isEdgeAllowed(.left), let leftIndicator {
+            leftIndicator.repositionVertically(
+                around: location.y,
+                screenFrame: metrics.frame,
+                visibleFrame: metrics.visibleFrame
+            )
             let proximity = distToLeft < zone ? (1.0 - distToLeft / zone) : 0
             leftIndicator.updateProximity(proximity)
         }
 
-        if let rightIndicator {
-            rightIndicator.repositionVertically(around: location.y, on: screen)
+        if settings.isEdgeAllowed(.right), let rightIndicator {
+            rightIndicator.repositionVertically(
+                around: location.y,
+                screenFrame: metrics.frame,
+                visibleFrame: metrics.visibleFrame
+            )
             let proximity = distToRight < zone ? (1.0 - distToRight / zone) : 0
             rightIndicator.updateProximity(proximity)
         }

@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -7,9 +8,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private(set) var shelfManager: ShelfManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return
+        }
+        #endif
         ProcessInfo.processInfo.disableAutomaticTermination("Active background drag shelf")
         ProcessInfo.processInfo.disableSuddenTermination()
         NSApp.setActivationPolicy(.accessory)
+        ShelfStore.cleanupAllStagingDirectories()
         shelfManager = ShelfManager()
         setupMenuBar()
         bindSettings()
@@ -120,21 +127,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         autoHideToggle.state = settings.autoHideEnabled ? .on : .off
         menu.addItem(autoHideToggle)
 
-        let autoHideStyleMenuItem = NSMenuItem(title: "Clean Auto hide Style", action: nil, keyEquivalent: "")
+        let autoHideStyleMenuItem = NSMenuItem(title: "Auto Hide Style", action: nil, keyEquivalent: "")
         let autoHideStyleSubmenu = NSMenu()
-
-        let defaultEdgeItem = NSMenuItem(title: "Shelf Content (Default)", action: #selector(selectDefaultAutoHideEdge), keyEquivalent: "")
-        defaultEdgeItem.target = self
-        defaultEdgeItem.state = !settings.prettyAutoHideTab ? .on : .off
-        autoHideStyleSubmenu.addItem(defaultEdgeItem)
-
-        autoHideStyleSubmenu.addItem(.separator())
 
         for style in AutoHideTabStyle.allCases {
             let item = NSMenuItem(title: style.displayName, action: #selector(selectAutoHideTabStyle(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = style.rawValue
-            item.state = (settings.prettyAutoHideTab && settings.autoHideTabStyle == style) ? .on : .off
+            item.state = (settings.autoHideTabStyle == style) ? .on : .off
             autoHideStyleSubmenu.addItem(item)
         }
         autoHideStyleMenuItem.submenu = autoHideStyleSubmenu
@@ -164,11 +164,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         themeSubmenu.addItem(variationMenuItem)
         themeSubmenu.addItem(.separator())
 
-        let sysItem = NSMenuItem(title: ShelfTheme.systemGlass.displayName, action: #selector(selectTheme(_:)), keyEquivalent: "")
-        sysItem.target = self
-        sysItem.representedObject = ShelfTheme.systemGlass.rawValue
-        sysItem.state = (settings.shelfTheme == .systemGlass) ? .on : .off
-        themeSubmenu.addItem(sysItem)
+        for candidate in ShelfTheme.adaptiveThemes {
+            let item = NSMenuItem(title: candidate.displayName, action: #selector(selectTheme(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = candidate.rawValue
+            item.state = (settings.shelfTheme == candidate) ? .on : .off
+            themeSubmenu.addItem(item)
+        }
+        themeSubmenu.addItem(.separator())
 
         let darkGroupItem = NSMenuItem(title: "Dark Themes (\(ShelfTheme.darkThemes.count))", action: nil, keyEquivalent: "")
         let darkSubmenu = NSMenu()
@@ -216,6 +219,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rightEdgeToggle.isEnabled = settings.edgeEnabled
         menu.addItem(rightEdgeToggle)
 
+        let sensitivityMenuItem = NSMenuItem(
+            title: "Window Creation Sensitivity (\(settings.edgeCreationSensitivity.displayName))",
+            action: nil,
+            keyEquivalent: ""
+        )
+        sensitivityMenuItem.isEnabled = settings.edgeEnabled
+        let sensitivitySubmenu = NSMenu()
+        for candidate in EdgeCreationSensitivity.allCases {
+            let item = NSMenuItem(
+                title: candidate.displayName,
+                action: #selector(selectEdgeCreationSensitivity(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = candidate.rawValue
+            item.state = (settings.edgeCreationSensitivity == candidate) ? .on : .off
+            sensitivitySubmenu.addItem(item)
+        }
+        sensitivityMenuItem.submenu = sensitivitySubmenu
+        menu.addItem(sensitivityMenuItem)
+
         menu.addItem(.separator())
 
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
@@ -258,14 +282,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         AppSettings.shared.autoHideEnabled.toggle()
     }
 
-    @objc private func selectDefaultAutoHideEdge() {
-        AppSettings.shared.prettyAutoHideTab = false
-    }
-
     @objc private func selectAutoHideTabStyle(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let style = AutoHideTabStyle(rawValue: raw) else { return }
-        AppSettings.shared.prettyAutoHideTab = true
         AppSettings.shared.autoHideTabStyle = style
     }
 
@@ -293,11 +312,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         AppSettings.shared.rightEdgeEnabled.toggle()
     }
 
+    @objc private func selectEdgeCreationSensitivity(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let chosen = EdgeCreationSensitivity(rawValue: raw) else { return }
+        AppSettings.shared.edgeCreationSensitivity = chosen
+    }
+
     @objc private func openSettings() {
         shelfManager?.openSettings()
     }
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    // MARK: - QLPreviewPanelController
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        ShelfQuickLookController.shared.acceptsPreviewPanelControl(panel)
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        ShelfQuickLookController.shared.beginPreviewPanelControl(panel)
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        ShelfQuickLookController.shared.endPreviewPanelControl(panel)
     }
 }

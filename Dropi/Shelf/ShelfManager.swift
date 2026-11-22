@@ -64,8 +64,10 @@ final class ShelfManager {
     static weak var shared: ShelfManager?
 
     private(set) var shelves: [ShelfInstance] = []
+    private let stagingRoot: URL
     private var settingsWindow: SettingsWindow?
     private let triggerEngine = TriggerEngine()
+    private let randomThemePicker = ShelfThemeRandomPicker()
     private var cancellables = Set<AnyCancellable>()
     private var lastEdgeUsed: ScreenEdge = .right
 
@@ -83,7 +85,11 @@ final class ShelfManager {
         shelves.contains { $0.isVisible }
     }
 
-    init() {
+    init(
+        stagingRoot: URL = ShelfStore.rootStagingDirectory,
+        startTriggers: Bool = true
+    ) {
+        self.stagingRoot = stagingRoot
         Self.shared = self
 
         triggerEngine.onTrigger = { [weak self] event in
@@ -92,7 +98,9 @@ final class ShelfManager {
         triggerEngine.onExternalDragEnded = { [weak self] droppedOnShelf in
             self?.handleExternalDragEnded(droppedOnShelf: droppedOnShelf)
         }
-        triggerEngine.start()
+        if startTriggers {
+            triggerEngine.start()
+        }
 
         AppSettings.shared.$autoHideEnabled
             .dropFirst()
@@ -104,25 +112,12 @@ final class ShelfManager {
             .store(in: &cancellables)
 
         // IMPORTANT: Combine `@Published` emits during `willSet`, BEFORE the property stores
-        // the new value — pass the emitted `pretty` / `style` directly so collapsed shelf width
-        // resizes IMMEDIATELY when switching Clean Auto hide styles (no unhide/rehide required!).
-        AppSettings.shared.$prettyAutoHideTab
-            .dropFirst()
-            .sink { [weak self] pretty in
-                self?.refreshAutoHiddenShelfFrames(
-                    prettyTab: pretty,
-                    style: AppSettings.shared.autoHideTabStyle
-                )
-            }
-            .store(in: &cancellables)
-
+        // the new value — pass the emitted `style` directly so collapsed shelf width
+        // resizes IMMEDIATELY when switching Auto Hide styles (no unhide/rehide required!).
         AppSettings.shared.$autoHideTabStyle
             .dropFirst()
             .sink { [weak self] style in
-                self?.refreshAutoHiddenShelfFrames(
-                    prettyTab: AppSettings.shared.prettyAutoHideTab,
-                    style: style
-                )
+                self?.refreshAutoHiddenShelfFrames(style: style)
             }
             .store(in: &cancellables)
 
@@ -138,7 +133,7 @@ final class ShelfManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 self?.handleActiveSpaceDidChange()
             }
         }
@@ -151,6 +146,8 @@ final class ShelfManager {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             spaceChangeObserver = nil
         }
+        cancellables.removeAll()
+        ShelfQuickLookController.shared.closeAndCleanup(synchronous: true)
         FilenameTooltipController.shared.hide()
         hideSnapPreview()
         triggerEngine.stop()
@@ -159,12 +156,20 @@ final class ShelfManager {
             shelf.pendingDropGraceTask = nil
             shelf.pendingAutoHideTask?.cancel()
             shelf.pendingAutoHideTask = nil
-            shelf.panel.prepareForHide()
-            shelf.panel.orderOut(nil)
+            shelf.cancellables.removeAll()
+            shelf.store.cancelAllMetadataTasks()
+            ShelfQuickLookController.shared.purgeAnchors(forShelfID: shelf.id)
+            shelf.panel.teardown()
         }
         shelves.removeAll()
-        settingsWindow?.orderOut(nil)
-        ShelfStore.cleanupAllStagingDirectories()
+        randomThemePicker.reset()
+        if let settingsWindow {
+            settingsWindow.isReleasedWhenClosed = false
+            settingsWindow.orderOut(nil)
+            settingsWindow.close()
+        }
+        settingsWindow = nil
+        ShelfStore.cleanupAllStagingDirectories(at: stagingRoot)
     }
 
     func refreshPermissionsIfNeeded() {
@@ -172,19 +177,27 @@ final class ShelfManager {
     }
 
     private func applyThemeAppearanceToAllWindows(_ theme: ShelfTheme) {
-        let appearance = theme.nsAppearance
-        for shelf in shelves {
-            shelf.panel.appearance = appearance
+        if theme.isRandomTheme {
+            randomThemePicker.reset()
+            var assignedThemes: [ShelfTheme] = []
+            for shelf in shelves {
+                let picked = randomThemePicker.pickTheme(for: theme, activeThemes: assignedThemes)
+                assignedThemes.append(picked)
+                shelf.store.assignedRandomTheme = picked
+                shelf.panel.appearance = picked.nsAppearance
+            }
+        } else {
+            let appearance = theme.nsAppearance
+            for shelf in shelves {
+                shelf.store.assignedRandomTheme = nil
+                shelf.panel.appearance = appearance
+            }
         }
-        settingsWindow?.appearance = appearance
+        settingsWindow?.appearance = theme.nsAppearance
     }
 
     private func currentAutoHideVisibleWidth() -> CGFloat {
-        let settings = AppSettings.shared
-        return Constants.Shelf.autoHideVisibleWidth(
-            prettyTab: settings.prettyAutoHideTab,
-            style: settings.autoHideTabStyle
-        )
+        Constants.Shelf.autoHideVisibleWidth(style: AppSettings.shared.autoHideTabStyle)
     }
 
     // MARK: - Trigger Handling
@@ -206,9 +219,26 @@ final class ShelfManager {
         if let hovered = shelves.first(where: { $0.isVisible && $0.panel.frame.insetBy(dx: -14, dy: -14).contains(cursorLocation) }) {
             hovered.pendingDropGraceTask?.cancel()
             hovered.pendingDropGraceTask = nil
+            hovered.pendingAutoHideTask?.cancel()
+            hovered.pendingAutoHideTask = nil
+            hovered.visibilityGeneration &+= 1
             hovered.panel.prepareForShow()
             hovered.panel.orderFrontRegardless()
-            revealShelfFromAutoHide(hovered)
+            if hovered.isAutoHidden {
+                revealShelfFromAutoHide(hovered)
+            } else {
+                let needsRestore = hovered.panel.frame != hovered.expandedFrame || hovered.panel.alphaValue < 0.99
+                if needsRestore {
+                    NSAnimationContext.runAnimationGroup { ctx in
+                        ctx.duration = 0.16
+                        ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.30, 1.0)
+                        hovered.panel.animator().setFrame(hovered.expandedFrame, display: true)
+                        hovered.panel.animator().alphaValue = 1.0
+                    }
+                }
+                hovered.panel.alphaValue = 1.0
+                updateAutoHideWatchdog()
+            }
             return
         }
 
@@ -290,20 +320,36 @@ final class ShelfManager {
         return shelf
     }
 
-    func createShelfFromClipboard() {
-        let tempDir = ShelfStore.rootStagingDirectory.appendingPathComponent("clipboard-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    func createShelfFromClipboard(from pasteboard: NSPasteboard = .general) {
+        let hasCandidateContent = PasteboardHandler.canAccept(pasteboard)
+            || pasteboard.canReadObject(forClasses: [NSImage.self], options: nil)
+        guard hasCandidateContent else { return }
+
+        guard let shelf = createManualShelf() else { return }
+        let shelfID = shelf.id
 
         let accepted = PasteboardHandler.extractItems(
-            from: NSPasteboard.general,
-            stagingDirectory: tempDir
-        ) { [weak self] items in
-            guard let self else { return }
-            _ = self.createManualShelf(initialItems: items)
+            from: pasteboard,
+            stagingDirectory: shelf.store.stagingDirectory,
+            stagingRoot: shelf.store.stagingRoot
+        ) { [weak self, weak shelf] items in
+            guard let self else {
+                ShelfStore.purgeOrphanedTemporaryFiles(in: items)
+                return
+            }
+            guard let shelf, self.shelves.contains(where: { $0.id == shelfID }) else {
+                ShelfStore.purgeOrphanedTemporaryFiles(in: items)
+                return
+            }
+            if !items.isEmpty {
+                shelf.store.addMany(items)
+            } else if shelf.store.items.isEmpty {
+                self.closeShelf(id: shelfID)
+            }
         }
 
-        if !accepted {
-            _ = createManualShelf()
+        if !accepted && shelf.store.items.isEmpty {
+            closeShelf(id: shelfID, animated: false)
         }
     }
 
@@ -332,17 +378,35 @@ final class ShelfManager {
     func focusOrToggleShelf(id: UUID) {
         guard let shelf = shelves.first(where: { $0.id == id }) else { return }
         if shelf.isVisible {
-            revealShelfFromAutoHide(shelf)
+            shelf.pendingDropGraceTask?.cancel()
+            shelf.pendingDropGraceTask = nil
+            shelf.pendingAutoHideTask?.cancel()
+            shelf.pendingAutoHideTask = nil
+            shelf.visibilityGeneration &+= 1
+            shelf.panel.prepareForShow()
             shelf.panel.orderFrontRegardless()
+            if shelf.isAutoHidden {
+                revealShelfFromAutoHide(shelf)
+            } else {
+                if shelf.panel.frame != shelf.expandedFrame || shelf.panel.alphaValue < 0.99 {
+                    NSAnimationContext.runAnimationGroup { ctx in
+                        ctx.duration = 0.16
+                        ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.30, 1.0)
+                        shelf.panel.animator().setFrame(shelf.expandedFrame, display: true)
+                        shelf.panel.animator().alphaValue = 1.0
+                    }
+                }
+                shelf.panel.alphaValue = 1.0
+            }
             scheduleAutoHideIfEligible(shelf, delay: Constants.Shelf.postDropPeekGrace)
         } else {
             presentExistingShelf(shelf)
         }
     }
 
-    func closeShelf(id: UUID) {
+    func closeShelf(id: UUID, animated: Bool = true) {
         guard let shelf = shelves.first(where: { $0.id == id }) else { return }
-        hideShelfAnimated(shelf, removeAfterHide: true)
+        hideShelfAnimated(shelf, removeAfterHide: true, animated: animated)
     }
 
     func openSettings() {
@@ -353,6 +417,68 @@ final class ShelfManager {
         let screen = ScreenGeometry.screen(containing: NSEvent.mouseLocation) ?? NSScreen.main ?? NSScreen.screens.first
         if let screen {
             settingsWindow?.showCentered(on: screen)
+        }
+    }
+
+    func showQuickLook(
+        items: [ShelfItem],
+        forShelfID shelfID: UUID,
+        toggle: Bool = false,
+        toggleIfSameItem: Bool = false
+    ) {
+        guard let shelf = shelves.first(where: { $0.id == shelfID }),
+              shelf.isVisible,
+              !shelf.isAutoHidden else {
+            return
+        }
+        guard !items.isEmpty else { return }
+
+        if toggleIfSameItem,
+           ShelfQuickLookController.shared.isPreviewingOrExporting(
+               shelfID: shelf.id,
+               itemIDs: items.map(\.id)
+           ) {
+            ShelfQuickLookController.shared.closePanel(restoreShelfFocus: false)
+            return
+        }
+
+        let navigateHandler: (UUID, Int) -> [ShelfItem]? = { [weak self] targetShelfID, delta in
+            guard let self,
+                  let targetShelf = self.shelves.first(where: { $0.id == targetShelfID }) else {
+                return nil
+            }
+            return targetShelf.store.moveSelection(by: delta)
+        }
+
+        let endedHandler: (UUID) -> Void = { [weak self] endedShelfID in
+            guard let self,
+                  let endedShelf = self.shelves.first(where: { $0.id == endedShelfID }) else {
+                return
+            }
+            if !self.isPointInShelfOrEdgeGutter(NSEvent.mouseLocation, shelf: endedShelf) {
+                endedShelf.isHovered = false
+                self.scheduleAutoHideIfEligible(endedShelf, delay: Constants.Shelf.peekDelay)
+            }
+        }
+
+        if toggle {
+            ShelfQuickLookController.shared.togglePreview(
+                items: items,
+                forShelfID: shelf.id,
+                stagingRoot: shelf.store.stagingRoot,
+                sourceWindow: shelf.panel,
+                onNavigateSelection: navigateHandler,
+                onSessionEnded: endedHandler
+            )
+        } else {
+            ShelfQuickLookController.shared.showPreview(
+                items: items,
+                forShelfID: shelf.id,
+                stagingRoot: shelf.store.stagingRoot,
+                sourceWindow: shelf.panel,
+                onNavigateSelection: navigateHandler,
+                onSessionEnded: endedHandler
+            )
         }
     }
 
@@ -376,7 +502,8 @@ final class ShelfManager {
                   !shelf.openedTemporarilyForDrag,
                   !shelf.isDragHovered,
                   !shelf.isDropTargeted,
-                  SelfDragState.sourceShelfID != shelf.id else {
+                  SelfDragState.sourceShelfID != shelf.id,
+                  !ShelfQuickLookController.shared.isPreviewing(shelfID: shelf.id) else {
                 continue
             }
             shelf.isHovered = false
@@ -402,7 +529,8 @@ final class ShelfManager {
                   !shelf.openedTemporarilyForDrag,
                   !shelf.isDragHovered,
                   !shelf.isDropTargeted,
-                  SelfDragState.sourceShelfID != shelf.id else {
+                  SelfDragState.sourceShelfID != shelf.id,
+                  !ShelfQuickLookController.shared.isPreviewing(shelfID: shelf.id) else {
                 continue
             }
 
@@ -424,10 +552,11 @@ final class ShelfManager {
         if needsWatchdog {
             guard autoHideWatchdogTimer == nil else { return }
             let timer = Timer(timeInterval: 0.40, repeats: true) { [weak self] _ in
-                Task { @MainActor [weak self] in
+                MainActor.assumeIsolated {
                     self?.reconcileAutoHideForExpandedShelves(delay: Constants.Shelf.peekDelay)
                 }
             }
+            timer.tolerance = 0.15
             RunLoop.main.add(timer, forMode: .common)
             autoHideWatchdogTimer = timer
         } else {
@@ -450,16 +579,9 @@ final class ShelfManager {
         updateAutoHideWatchdog()
     }
 
-    func refreshAutoHiddenShelfFrames(
-        prettyTab: Bool? = nil,
-        style: AutoHideTabStyle? = nil
-    ) {
-        let resolvedPretty = prettyTab ?? AppSettings.shared.prettyAutoHideTab
+    func refreshAutoHiddenShelfFrames(style: AutoHideTabStyle? = nil) {
         let resolvedStyle = style ?? AppSettings.shared.autoHideTabStyle
-        let visibleWidth = Constants.Shelf.autoHideVisibleWidth(
-            prettyTab: resolvedPretty,
-            style: resolvedStyle
-        )
+        let visibleWidth = Constants.Shelf.autoHideVisibleWidth(style: resolvedStyle)
         for shelf in shelves where shelf.isVisible && shelf.isAutoHidden {
             guard let screen = shelf.dockedScreen
                     ?? ScreenGeometry.screen(containing: NSPoint(x: shelf.expandedFrame.midX, y: shelf.expandedFrame.midY))
@@ -564,7 +686,7 @@ final class ShelfManager {
         }
 
         let work = DispatchWorkItem { [weak self, weak shelf] in
-            Task { @MainActor [weak self, weak shelf] in
+            MainActor.assumeIsolated {
                 guard let self, let shelf else { return }
                 shelf.pendingAutoHideTask = nil
                 self.autoHideShelfIfStillEligible(shelf, ignorePointerPosition: ignorePointerPosition)
@@ -588,7 +710,8 @@ final class ShelfManager {
               !shelf.isDragHovered,
               !shelf.isDropTargeted,
               !shelf.openedTemporarilyForDrag,
-              SelfDragState.sourceShelfID != shelf.id else {
+              SelfDragState.sourceShelfID != shelf.id,
+              !ShelfQuickLookController.shared.isPreviewing(shelfID: shelf.id) else {
             updateAutoHideWatchdog()
             return
         }
@@ -605,6 +728,7 @@ final class ShelfManager {
             return
         }
 
+        shelf.panel.releaseKeyFocus()
         FilenameTooltipController.shared.hide()
 
         let targetHiddenFrame = ShelfLayoutSolver.autoHideFrame(
@@ -631,6 +755,7 @@ final class ShelfManager {
         shelf.isManuallyMoving = true
         shelf.pendingAutoHideTask?.cancel()
         shelf.pendingAutoHideTask = nil
+        shelf.panel.releaseKeyFocus()
         FilenameTooltipController.shared.hide()
         if shelf.isAutoHidden {
             revealShelfFromAutoHide(shelf)
@@ -764,15 +889,30 @@ final class ShelfManager {
         return ShelfColorVariation.randomVariant(excluding: usedSlots)
     }
 
+    private func pickRandomThemeIfNeeded(for selectedTheme: ShelfTheme) -> ShelfTheme? {
+        guard selectedTheme.isRandomTheme else { return nil }
+        let activeThemes = shelves.map { $0.store.effectiveTheme(for: selectedTheme) }
+        return randomThemePicker.pickTheme(for: selectedTheme, activeThemes: activeThemes)
+    }
+
     private func createAndPresentShelf(
         edge: ScreenEdge,
         preferredCenterY: CGFloat,
         on screen: NSScreen,
         temporaryForDrag: Bool
     ) -> ShelfInstance {
+        ShelfStore.pruneRetained()
         let number = nextAvailableShelfNumber()
         let variation = pickColorVariation(forShelfNumber: number)
-        let store = ShelfStore(shelfNumber: number, colorVariation: variation)
+        let selectedTheme = AppSettings.shared.shelfTheme
+        let assignedRandomTheme = pickRandomThemeIfNeeded(for: selectedTheme)
+        let effectiveTheme = assignedRandomTheme ?? selectedTheme
+        let store = ShelfStore(
+            shelfNumber: number,
+            colorVariation: variation,
+            assignedRandomTheme: assignedRandomTheme,
+            stagingRoot: stagingRoot
+        )
         let initialSize = NSSize(
             width: Constants.Shelf.width,
             height: Constants.Shelf.preferredHeight(forItemCount: 0)
@@ -789,7 +929,9 @@ final class ShelfManager {
         let panel = ShelfWindow(
             shelfID: store.id,
             stagingDirectory: store.stagingDirectory,
-            contentRect: NSRect(origin: .zero, size: initialSize)
+            stagingRoot: store.stagingRoot,
+            contentRect: NSRect(origin: .zero, size: initialSize),
+            theme: effectiveTheme
         )
 
         let shelfID = store.id
@@ -799,16 +941,14 @@ final class ShelfManager {
             onRequestClose: { [weak self] in
                 self?.closeShelf(id: shelfID)
             },
-            onRequestNewShelf: { [weak self] in
-                guard let self else { return }
-                let currentEdge = self.shelves.first(where: { $0.id == shelfID })?.dockedEdge ?? edge
-                _ = self.createManualShelf(edge: currentEdge)
-            },
-            onRequestSettings: { [weak self] in
-                self?.openSettings()
-            },
             onRequestResize: { [weak self] newHeight in
                 self?.resizeShelf(id: shelfID, height: newHeight)
+            },
+            onRequestQuickLook: { [weak self] item in
+                self?.showQuickLook(items: [item], forShelfID: shelfID, toggleIfSameItem: true)
+            },
+            onSelectionInteraction: { [weak self] in
+                self?.shelves.first(where: { $0.id == shelfID })?.panel.acquireKeyFocusForKeyboard()
             }
         )
 
@@ -836,6 +976,14 @@ final class ShelfManager {
             guard let self, let shelf else { return }
             self.handleShelfManualMoveEnded(shelf, movedFrame: movedFrame)
         }
+        panel.onQuickLookRequested = { [weak self, weak shelf] in
+            guard let self, let shelf else { return }
+            self.showQuickLook(items: shelf.store.itemsForQuickLook, forShelfID: shelf.id, toggle: true)
+        }
+        panel.onNavigateSelection = { [weak shelf] delta in
+            guard let shelf else { return }
+            _ = shelf.store.moveSelection(by: delta)
+        }
         panel.dropContainerView.onHoverChanged = { [weak self, weak shelf] hovering in
             guard let self, let shelf else { return }
             self.handleShelfHoverChanged(shelf, isHovering: hovering)
@@ -845,7 +993,10 @@ final class ShelfManager {
             self.handleShelfDragHoverChanged(shelf, isDragHovering: dragHovering)
         }
         panel.dropContainerView.onItemsDropped = { [weak self, weak shelf] items in
-            guard let self, let shelf else { return }
+            guard let self, let shelf, self.shelves.contains(where: { $0.id == shelf.id }) else {
+                ShelfStore.purgeOrphanedTemporaryFiles(in: items)
+                return
+            }
             self.handleItemsDropped(items, into: shelf)
         }
         panel.dropContainerView.onDraggingSessionEnded = { [weak self, weak shelf] in
@@ -857,12 +1008,37 @@ final class ShelfManager {
             }
         }
 
+        var lastObservedItemIDs: [UUID] = []
         store.$items
             .dropFirst()
             .sink { [weak self, weak shelf] items in
                 guard let self, let shelf else { return }
+                let currentIDs = items.map(\.id)
+                let membershipChanged = (currentIDs != lastObservedItemIDs)
+                lastObservedItemIDs = currentIDs
+
+                if membershipChanged, ShelfQuickLookController.shared.hasActiveSession {
+                    ShelfQuickLookController.shared.updatePreviewIfActive(
+                        forShelfID: shelf.id,
+                        remainingItems: items
+                    )
+                }
                 if items.isEmpty && AppSettings.shared.autoHideWhenEmpty && !shelf.openedTemporarilyForDrag {
                     self.closeShelf(id: shelf.id)
+                }
+            }
+            .store(in: &shelf.cancellables)
+
+        store.$selectedIDs
+            .dropFirst()
+            .sink { [weak shelf] newSelectedIDs in
+                guard let shelf, !newSelectedIDs.isEmpty else { return }
+                let selected = shelf.store.items.filter { newSelectedIDs.contains($0.id) }
+                if !selected.isEmpty {
+                    ShelfQuickLookController.shared.syncSelectionIfPreviewing(
+                        items: selected,
+                        forShelfID: shelf.id
+                    )
                 }
             }
             .store(in: &shelf.cancellables)
@@ -934,7 +1110,7 @@ final class ShelfManager {
         scheduleAutoHideIfEligible(shelf, delay: Constants.Shelf.postDropPeekGrace)
     }
 
-    private func hideShelfAnimated(_ shelf: ShelfInstance, removeAfterHide: Bool) {
+    private func hideShelfAnimated(_ shelf: ShelfInstance, removeAfterHide: Bool, animated: Bool = true) {
         shelf.pendingDropGraceTask?.cancel()
         shelf.pendingDropGraceTask = nil
         shelf.pendingAutoHideTask?.cancel()
@@ -952,16 +1128,22 @@ final class ShelfManager {
 
         let finalize: @MainActor () -> Void = { [weak self, weak shelf] in
             guard let self, let shelf, shelf.visibilityGeneration == expectedGen else { return }
-            shelf.panel.orderOut(nil)
-            shelf.panel.alphaValue = 1.0
             if removeAfterHide {
+                shelf.cancellables.removeAll()
+                shelf.store.cancelAllMetadataTasks()
+                ShelfQuickLookController.shared.purgeAnchors(forShelfID: shelf.id)
+                shelf.panel.teardown()
                 shelf.store.cleanupStagingDirectory()
+                ShelfStore.pruneRetained()
                 self.shelves.removeAll { $0.id == shelf.id }
+            } else {
+                shelf.panel.orderOut(nil)
+                shelf.panel.alphaValue = 1.0
             }
             self.updateAutoHideWatchdog()
         }
 
-        guard panel.isVisible else {
+        guard animated, panel.isVisible else {
             finalize()
             return
         }
@@ -1074,7 +1256,7 @@ final class ShelfManager {
     private func scheduleTemporaryRetraction(for shelf: ShelfInstance) {
         shelf.pendingDropGraceTask?.cancel()
         let work = DispatchWorkItem { [weak self, weak shelf] in
-            Task { @MainActor [weak self, weak shelf] in
+            MainActor.assumeIsolated {
                 guard let self, let shelf else { return }
                 shelf.pendingDropGraceTask = nil
                 guard shelf.openedTemporarilyForDrag else { return }

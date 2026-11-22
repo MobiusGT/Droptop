@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import QuickLookUI
 
 final class ShelfWindow: NSPanel {
     let shelfID: UUID
@@ -7,12 +8,24 @@ final class ShelfWindow: NSPanel {
     var onManualMoveBegan: (() -> Void)?
     var onManualMoveUpdated: ((NSRect, NSPoint) -> Void)?
     var onManualMoveEnded: ((NSRect) -> Void)?
+    var onQuickLookRequested: (() -> Void)?
+    var onNavigateSelection: ((Int) -> Void)?
 
-    init(shelfID: UUID, stagingDirectory: URL, contentRect: NSRect) {
+    private(set) var allowsKeyStatus: Bool = false
+    private(set) var allowsMainStatus: Bool = false
+
+    init(
+        shelfID: UUID,
+        stagingDirectory: URL,
+        stagingRoot: URL = ShelfStore.rootStagingDirectory,
+        contentRect: NSRect,
+        theme: ShelfTheme? = nil
+    ) {
         self.shelfID = shelfID
         self.dropContainerView = ShelfDropContainerView(
             shelfID: shelfID,
             stagingDirectory: stagingDirectory,
+            stagingRoot: stagingRoot,
             frame: NSRect(origin: .zero, size: contentRect.size)
         )
 
@@ -34,7 +47,7 @@ final class ShelfWindow: NSPanel {
         hasShadow = true
         isMovableByWindowBackground = false
         animationBehavior = .none
-        appearance = AppSettings.shared.shelfTheme.nsAppearance
+        appearance = (theme ?? AppSettings.shared.shelfTheme).nsAppearance
 
         // Explicitly allow shrinking down to a thin 14pt/26pt Auto-Hide strip
         // so the window frame ALWAYS stays 100% inside `screen.frame` (zero Spaces bleed!).
@@ -48,8 +61,98 @@ final class ShelfWindow: NSPanel {
         contentView = dropContainerView
     }
 
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
+    override var canBecomeKey: Bool {
+        allowsKeyStatus && isVisible && !dropContainerView.highlightState.isAutoHidden
+    }
+
+    override var canBecomeMain: Bool {
+        allowsMainStatus && isVisible
+    }
+
+    func acquireKeyFocusForKeyboard() {
+        guard isVisible, !dropContainerView.highlightState.isAutoHidden else { return }
+        allowsKeyStatus = true
+        makeKey()
+        makeFirstResponder(self)
+    }
+
+    func releaseKeyFocus() {
+        allowsKeyStatus = false
+        if isKeyWindow {
+            resignKey()
+        }
+    }
+
+    /// Temporarily permits key + main window status while `QLPreviewPanel` is open so
+    /// this shelf stays in AppKit's responder chain even after `QLPreviewPanel` becomes key.
+    func beginQuickLookControlFocus() {
+        guard isVisible else { return }
+        allowsKeyStatus = true
+        allowsMainStatus = true
+        makeKey()
+        makeMain()
+        makeFirstResponder(self)
+    }
+
+    func endQuickLookControlFocus() {
+        allowsMainStatus = false
+        if isMainWindow {
+            resignMain()
+        }
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        if !allowsMainStatus {
+            allowsKeyStatus = false
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let relevant: NSEvent.ModifierFlags = [.command, .shift, .option, .control]
+        let modifiers = event.modifierFlags.intersection(relevant)
+        guard modifiers.isEmpty else {
+            super.keyDown(with: event)
+            return
+        }
+
+        switch event.keyCode {
+        case 49: // Spacebar
+            if !event.isARepeat {
+                onQuickLookRequested?()
+            }
+            return
+
+        case 53: // Escape
+            if ShelfQuickLookController.shared.isPreviewing(shelfID: shelfID) {
+                ShelfQuickLookController.shared.closePanel(restoreShelfFocus: true)
+            } else {
+                releaseKeyFocus()
+            }
+            return
+
+        case 125, 126: // Down / Up arrows
+            onNavigateSelection?(event.keyCode == 125 ? 1 : -1)
+            return
+
+        default:
+            super.keyDown(with: event)
+        }
+    }
+
+    // MARK: - QLPreviewPanelController
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        ShelfQuickLookController.shared.acceptsPreviewPanelControl(panel)
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        ShelfQuickLookController.shared.beginPreviewPanelControl(panel)
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        ShelfQuickLookController.shared.endPreviewPanelControl(panel)
+    }
 
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         frameRect
@@ -74,8 +177,32 @@ final class ShelfWindow: NSPanel {
     /// Always called BEFORE any hide/slide-out animation so macOS 26 CoreDragMessageHandler
     /// never delivers a reentrant drag-enter message to a disappearing window.
     func prepareForHide() {
+        ShelfQuickLookController.shared.closeIfShowing(forShelfID: shelfID)
+        endQuickLookControlFocus()
+        releaseKeyFocus()
         FilenameTooltipController.shared.hide()
         dropContainerView.unregisterAllDraggedTypes()
         ignoresMouseEvents = true
+    }
+
+    /// Deterministic cleanup for permanently closed shelves (never called on Hide All / Show All).
+    /// Breaks closure/view references immediately and closes the panel safely under ARC.
+    func teardown() {
+        prepareForHide()
+        onManualMoveBegan = nil
+        onManualMoveUpdated = nil
+        onManualMoveEnded = nil
+        onQuickLookRequested = nil
+        onNavigateSelection = nil
+        dropContainerView.onItemsDropped = nil
+        dropContainerView.onHoverChanged = nil
+        dropContainerView.onDragHoverChanged = nil
+        dropContainerView.onDraggingSessionEnded = nil
+        isReleasedWhenClosed = false
+        for subview in dropContainerView.subviews {
+            subview.removeFromSuperview()
+        }
+        contentView = nil
+        close()
     }
 }

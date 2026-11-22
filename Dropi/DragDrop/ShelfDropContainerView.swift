@@ -7,6 +7,7 @@ final class ShelfDropHighlightState: ObservableObject {
     @Published var isDropTargeted: Bool = false
     @Published var isAutoHidden: Bool = false
     @Published var dockedEdge: ScreenEdge = .right
+    @Published var isPointerInsideShelf: Bool = false
 }
 
 /// Native AppKit NSDraggingDestination container hosting a shelf's SwiftUI view.
@@ -18,6 +19,7 @@ final class ShelfDropHighlightState: ObservableObject {
 final class ShelfDropContainerView: NSView {
     let shelfID: UUID
     let stagingDirectory: URL
+    let stagingRoot: URL
     let highlightState = ShelfDropHighlightState()
 
     var onItemsDropped: (([ShelfItem]) -> Void)?
@@ -28,9 +30,15 @@ final class ShelfDropContainerView: NSView {
     private var isRegisteredForDrags = false
     private var hoverTrackingArea: NSTrackingArea?
 
-    init(shelfID: UUID, stagingDirectory: URL, frame frameRect: NSRect = .zero) {
+    init(
+        shelfID: UUID,
+        stagingDirectory: URL,
+        stagingRoot: URL = ShelfStore.rootStagingDirectory,
+        frame frameRect: NSRect = .zero
+    ) {
         self.shelfID = shelfID
         self.stagingDirectory = stagingDirectory
+        self.stagingRoot = stagingRoot
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -61,11 +69,13 @@ final class ShelfDropContainerView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
+        highlightState.isPointerInsideShelf = true
         onHoverChanged?(true)
     }
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
+        highlightState.isPointerInsideShelf = false
         FilenameTooltipController.shared.hide()
         onHoverChanged?(false)
     }
@@ -82,6 +92,7 @@ final class ShelfDropContainerView: NSView {
             isRegisteredForDrags = false
         }
         highlightState.isDropTargeted = false
+        highlightState.isPointerInsideShelf = false
     }
 
     private func canAcceptDrag(_ sender: any NSDraggingInfo) -> Bool {
@@ -134,10 +145,15 @@ final class ShelfDropContainerView: NSView {
 
         let accepted = PasteboardHandler.extractItems(
             from: sender.draggingPasteboard,
-            stagingDirectory: stagingDirectory
+            stagingDirectory: stagingDirectory,
+            stagingRoot: stagingRoot
         ) { [weak self] items in
             guard !items.isEmpty else { return }
-            self?.onItemsDropped?(items)
+            guard let self, let onItemsDropped = self.onItemsDropped else {
+                ShelfStore.purgeOrphanedTemporaryFiles(in: items)
+                return
+            }
+            onItemsDropped(items)
         }
 
         if accepted && !SelfDragState.isDraggingFromShelf {

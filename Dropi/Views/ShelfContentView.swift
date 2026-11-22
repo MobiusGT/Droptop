@@ -5,21 +5,30 @@ struct ShelfContentView: View {
     @ObservedObject var store: ShelfStore
     @ObservedObject var dropHighlight: ShelfDropHighlightState
     @ObservedObject private var settings = AppSettings.shared
+    @StateObject private var rowHover = ShelfRowHoverCoordinator()
 
     let onRequestClose: () -> Void
-    let onRequestNewShelf: () -> Void
-    let onRequestSettings: () -> Void
     let onRequestResize: (CGFloat) -> Void
+    let onRequestQuickLook: (ShelfItem) -> Void
+    let onSelectionInteraction: () -> Void
 
-    private var palette: ResolvedShelfPalette {
-        settings.shelfTheme.palette(
-            variation: store.colorVariation,
+    private var activeTheme: ShelfTheme {
+        store.effectiveTheme(for: settings.shelfTheme)
+    }
+
+    private var effectiveColorVariation: ShelfColorVariation {
+        settings.shelfTheme.isRandomTheme ? .identity : store.colorVariation
+    }
+
+    private var resolvedPalette: ResolvedShelfPalette {
+        activeTheme.palette(
+            variation: effectiveColorVariation,
             level: settings.colorVariationLevel
         )
     }
 
     private var showCleanAutoHideTab: Bool {
-        dropHighlight.isAutoHidden && settings.prettyAutoHideTab
+        dropHighlight.isAutoHidden && settings.autoHideTabStyle.usesCustomTabOverlay
     }
 
     private var growthAnchor: UnitPoint {
@@ -31,6 +40,7 @@ struct ShelfContentView: View {
     }
 
     var body: some View {
+        let palette = resolvedPalette
         GeometryReader { geo in
             ZStack {
                 // Layer 1: Full shelf content lives inside a zero-min-width overlay so SwiftUI
@@ -40,7 +50,7 @@ struct ShelfContentView: View {
                 Color.clear
                     .frame(width: geo.size.width, height: geo.size.height)
                     .overlay(alignment: contentAlignment) {
-                        fullShelfContent
+                        fullShelfContent(palette: palette)
                             .frame(width: Constants.Shelf.width, height: geo.size.height)
                             .scaleEffect(x: showCleanAutoHideTab ? 0.94 : 1.0, y: 1.0, anchor: growthAnchor)
                             .opacity(showCleanAutoHideTab ? 0.0 : 1.0)
@@ -48,10 +58,10 @@ struct ShelfContentView: View {
                     }
                     .clipped()
 
-                // Layer 2: Clean Auto-Hide Tab fills the exact live collapsed window bounds
-                // (26pt for Color Only, 54pt for File Icons / Shelf Number) and dissolves
+                // Layer 2: Auto-Hide edge tab fills the exact live collapsed window bounds
+                // (26pt for Handle Bar, 54pt for Icons / Shelf Number) and dissolves
                 // smoothly as the shelf grows out from behind it.
-                if settings.prettyAutoHideTab {
+                if settings.autoHideTabStyle.usesCustomTabOverlay {
                     AutoHideTabView(
                         store: store,
                         style: settings.autoHideTabStyle,
@@ -83,18 +93,35 @@ struct ShelfContentView: View {
         .preferredColorScheme(palette.preferredColorScheme)
         .animation(.easeInOut(duration: 0.16), value: dropHighlight.isDropTargeted)
         .animation(.easeOut(duration: 0.24), value: showCleanAutoHideTab)
-        .animation(.easeInOut(duration: 0.22), value: settings.shelfTheme)
+        .animation(.easeInOut(duration: 0.22), value: activeTheme)
         .animation(.easeInOut(duration: 0.22), value: settings.colorVariationLevel)
         .onChange(of: store.items.count) { _, newCount in
+            rowHover.pruneHover(validItemIDs: Set(store.items.map(\.id)))
+            rowHover.scheduleReconcile()
             onRequestResize(Constants.Shelf.preferredHeight(forItemCount: newCount))
+        }
+        .onChange(of: dropHighlight.isPointerInsideShelf) { _, inside in
+            if !inside {
+                rowHover.clearHover()
+            }
+        }
+        .onChange(of: dropHighlight.isAutoHidden) { _, hidden in
+            if hidden {
+                rowHover.clearHover()
+            }
+        }
+        .onChange(of: dropHighlight.isDropTargeted) { _, targeted in
+            if targeted {
+                rowHover.clearHover()
+            }
         }
     }
 
     // MARK: - Full Shelf Body
 
-    private var fullShelfContent: some View {
+    private func fullShelfContent(palette: ResolvedShelfPalette) -> some View {
         VStack(spacing: 0) {
-            headerBar
+            headerBar(palette: palette)
 
             if store.items.isEmpty {
                 VStack(spacing: 4) {
@@ -110,6 +137,7 @@ struct ShelfContentView: View {
                                 .padding(.horizontal, 9)
                                 .padding(.vertical, 3.5)
                                 .background(palette.controlFill, in: Capsule())
+                                .hoverDarken(in: Capsule())
                         }
                         .buttonStyle(.plain)
                         Spacer()
@@ -118,17 +146,17 @@ struct ShelfContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                themeDivider
-                selectionToolbar
-                themeDivider
-                itemListView
-                themeDivider
-                bottomDragBar
+                themeDivider(palette: palette)
+                selectionToolbar(palette: palette)
+                themeDivider(palette: palette)
+                itemListView(palette: palette)
+                themeDivider(palette: palette)
+                bottomDragBar(palette: palette)
             }
         }
     }
 
-    private var themeDivider: some View {
+    private func themeDivider(palette: ResolvedShelfPalette) -> some View {
         Rectangle()
             .fill(palette.dividerColor)
             .frame(height: 0.75)
@@ -136,13 +164,15 @@ struct ShelfContentView: View {
 
     // MARK: - Header (Custom Drag Handle — Never Triggers macOS Half-Screen Tiling!)
 
-    private var headerBar: some View {
+    private func headerBar(palette: ResolvedShelfPalette) -> some View {
         HStack(spacing: 6) {
             Button(action: onRequestClose) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 16))
                     .symbolRenderingMode(.palette)
                     .foregroundStyle(palette.primaryTextColor.opacity(0.85), palette.controlFill)
+                    .frame(width: 20, height: 20)
+                    .hoverDarken(in: Circle())
             }
             .buttonStyle(.plain)
             .help("Close this shelf")
@@ -172,24 +202,6 @@ struct ShelfContentView: View {
             .contentShape(Rectangle())
             .overlay(WindowDragGesture())
             .help("Drag up/down to reposition, or past the center of the screen to switch sides")
-
-            Button(action: onRequestNewShelf) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 16))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(palette.primaryTextColor.opacity(0.85), palette.controlFill)
-            }
-            .buttonStyle(.plain)
-            .help("New Shelf")
-
-            Button(action: onRequestSettings) {
-                Image(systemName: "gearshape.circle")
-                    .font(.system(size: 16))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(palette.primaryTextColor.opacity(0.85), palette.controlFill)
-            }
-            .buttonStyle(.plain)
-            .help("Settings & Themes")
         }
         .padding(.horizontal, Constants.Shelf.padding)
         .padding(.vertical, 7)
@@ -197,10 +209,11 @@ struct ShelfContentView: View {
 
     // MARK: - Selection Toolbar
 
-    private var selectionToolbar: some View {
+    private func selectionToolbar(palette: ResolvedShelfPalette) -> some View {
         HStack(spacing: 6) {
             Button {
                 store.toggleSelectAll()
+                onSelectionInteraction()
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: store.isAllSelected ? "checkmark.circle.fill" : "circle")
@@ -212,6 +225,7 @@ struct ShelfContentView: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
                 .background(palette.controlFill, in: Capsule())
+                .hoverDarken(in: Capsule())
             }
             .buttonStyle(.plain)
             .help(store.isAllSelected ? "Deselect all items" : "Select all items in this shelf")
@@ -230,17 +244,20 @@ struct ShelfContentView: View {
 
             Spacer(minLength: 0)
 
-            Button {
-                store.copySelectionOrAllToClipboard()
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 11))
-                    .foregroundStyle(palette.secondaryTextColor)
-                    .frame(width: 22, height: 22)
-                    .background(palette.controlFill, in: Circle())
+            if settings.showCopyButtonInShelf {
+                Button {
+                    store.copySelectionOrAllToClipboard()
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 11))
+                        .foregroundStyle(palette.secondaryTextColor)
+                        .frame(width: 22, height: 22)
+                        .background(palette.controlFill, in: Circle())
+                        .hoverDarken(in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(store.selectedIDs.isEmpty ? "Copy all items" : "Copy selected items")
             }
-            .buttonStyle(.plain)
-            .help(store.selectedIDs.isEmpty ? "Copy all items" : "Copy selected items")
 
             Button {
                 if store.selectedIDs.isEmpty {
@@ -254,6 +271,7 @@ struct ShelfContentView: View {
                     .foregroundStyle(palette.secondaryTextColor)
                     .frame(width: 22, height: 22)
                     .background(palette.controlFill, in: Circle())
+                    .hoverDarken(in: Circle())
             }
             .buttonStyle(.plain)
             .help(store.selectedIDs.isEmpty ? "Clear this shelf" : "Remove selected items")
@@ -264,15 +282,18 @@ struct ShelfContentView: View {
 
     // MARK: - Listed Selectable Items
 
-    private var itemListView: some View {
+    private func itemListView(palette: ResolvedShelfPalette) -> some View {
         ScrollView {
             LazyVStack(spacing: 4) {
                 ForEach(store.items) { item in
                     ShelfItemRowView(
                         shelfID: store.id,
                         item: item,
+                        theme: activeTheme,
                         palette: palette,
-                        colorVariation: store.colorVariation,
+                        colorVariation: effectiveColorVariation,
+                        hoverCoordinator: rowHover,
+                        isHovered: rowHover.hoveredItemID == item.id,
                         isAutoHidden: dropHighlight.isAutoHidden,
                         isSelected: store.selectedIDs.contains(item.id),
                         hasAnySelection: !store.selectedIDs.isEmpty,
@@ -281,6 +302,7 @@ struct ShelfContentView: View {
                         },
                         onToggleCheckbox: {
                             store.toggleSelection(itemID: item.id)
+                            onSelectionInteraction()
                         },
                         onTapRow: { cmdPressed, shiftPressed in
                             store.handleRowTap(
@@ -289,8 +311,11 @@ struct ShelfContentView: View {
                                 shiftPressed: shiftPressed
                             )
                         },
-                        onDragCompleted: { draggedIDs in
-                            store.removeByIDs(draggedIDs)
+                        onDragCompleted: { draggedIDs, adoptedPaths in
+                            store.removeDraggedOut(draggedIDs, adoptedSourcePaths: adoptedPaths)
+                        },
+                        onQuickLook: {
+                            onRequestQuickLook(item)
                         },
                         onRemove: {
                             store.remove(item)
@@ -310,14 +335,21 @@ struct ShelfContentView: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 6)
         }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y
+        } action: { _, _ in
+            FilenameTooltipController.shared.hide()
+            rowHover.reconcileWithLivePointer()
+        }
     }
 
     // MARK: - Bottom Drag-Out Bar
 
-    private var bottomDragBar: some View {
+    private func bottomDragBar(palette: ResolvedShelfPalette) -> some View {
         HStack(spacing: 6) {
             if store.hasPartialSelection {
                 dragPill(
+                    palette: palette,
                     title: "Drag \(store.selectedIDs.count) Selected",
                     symbol: "hand.draw.fill",
                     isProminent: true,
@@ -325,6 +357,7 @@ struct ShelfContentView: View {
                 )
 
                 dragPill(
+                    palette: palette,
                     title: "All (\(store.items.count))",
                     symbol: "square.stack.3d.up.fill",
                     isProminent: false,
@@ -334,6 +367,7 @@ struct ShelfContentView: View {
             } else {
                 let count = store.items.count
                 dragPill(
+                    palette: palette,
                     title: count == 1 ? "Drag Item" : "Drag All (\(count))",
                     symbol: count == 1 ? "hand.draw.fill" : "square.stack.3d.up.fill",
                     isProminent: true,
@@ -346,11 +380,37 @@ struct ShelfContentView: View {
     }
 
     private func dragPill(
+        palette: ResolvedShelfPalette,
         title: String,
         symbol: String,
         isProminent: Bool,
         resolveItems: @escaping () -> [ShelfItem]
     ) -> some View {
+        ShelfDragPillView(
+            store: store,
+            palette: palette,
+            title: title,
+            symbol: symbol,
+            isProminent: isProminent,
+            resolveItems: resolveItems
+        )
+    }
+}
+
+private struct ShelfDragPillView: View {
+    @ObservedObject var store: ShelfStore
+    let palette: ResolvedShelfPalette
+    let title: String
+    let symbol: String
+    let isProminent: Bool
+    let resolveItems: () -> [ShelfItem]
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovered = false
+
+    var body: some View {
+        let isLight = (colorScheme == .light)
+        let shape = RoundedRectangle(cornerRadius: 9)
         HStack(spacing: 5) {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .semibold))
@@ -363,16 +423,21 @@ struct ShelfContentView: View {
         .padding(.vertical, 6.5)
         .padding(.horizontal, 10)
         .background(
-            RoundedRectangle(cornerRadius: 9)
+            shape
                 .fill(isProminent ? palette.accentColor.opacity(0.92) : palette.controlFill)
+        )
+        .overlay(
+            shape
+                .fill(Color.black.opacity(isHovered ? (isLight ? 0.16 : 0.28) : 0.0))
+                .allowsHitTesting(false)
         )
         .overlay(
             ShelfDragSource(
                 shelfID: store.id,
                 resolveDragItems: resolveItems,
                 contextMenuItem: nil,
-                onDragCompleted: { draggedIDs in
-                    store.removeByIDs(draggedIDs)
+                onDragCompleted: { draggedIDs, adoptedPaths in
+                    store.removeDraggedOut(draggedIDs, adoptedSourcePaths: adoptedPaths)
                 },
                 onSelectAll: {
                     store.selectAll()
@@ -382,9 +447,14 @@ struct ShelfContentView: View {
                 },
                 onClearShelf: {
                     store.clearAll()
+                },
+                onHoverChanged: { hovering, _, _ in
+                    isHovered = hovering
                 }
             )
         )
+        .clipShape(shape)
+        .animation(.easeOut(duration: 0.10), value: isHovered)
     }
 }
 

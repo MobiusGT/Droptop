@@ -62,6 +62,8 @@ struct SettingsView: View {
                     .font(.system(size: 16))
                     .symbolRenderingMode(.palette)
                     .foregroundStyle(palette.primaryTextColor.opacity(0.85), palette.controlFill)
+                    .frame(width: 20, height: 20)
+                    .hoverDarken(in: Circle())
             }
             .buttonStyle(.plain)
 
@@ -86,6 +88,7 @@ struct SettingsView: View {
                 screenEdgeSection
                 otherTriggersSection
                 generalSection
+                versionFooter
             }
             .padding(Constants.Shelf.padding + 2)
         }
@@ -111,7 +114,7 @@ struct SettingsView: View {
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(palette.primaryTextColor)
 
-                            Text("\(settings.shelfTheme.displayName) · \(ShelfTheme.allCases.count) themes (sorted by color)")
+                            Text("\(settings.shelfTheme.displayName) · \(ShelfTheme.concreteThemes.count) themes (sorted by color)")
                                 .font(.system(size: 10))
                                 .foregroundStyle(palette.secondaryTextColor)
                         }
@@ -125,7 +128,7 @@ struct SettingsView: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
-                    .contentShape(Rectangle())
+                    .hoverDarken(in: RoundedRectangle(cornerRadius: 11))
                 }
                 .buttonStyle(.plain)
 
@@ -136,7 +139,7 @@ struct SettingsView: View {
                         .padding(.horizontal, 8)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        themeGroup(title: "Adaptive", themes: [.systemGlass])
+                        themeGroup(title: "Adaptive (\(ShelfTheme.adaptiveThemes.count))", themes: ShelfTheme.adaptiveThemes)
                         themeGroup(title: "Dark (\(ShelfTheme.darkThemes.count))", themes: ShelfTheme.darkThemes)
                         themeGroup(title: "Light (\(ShelfTheme.lightThemes.count))", themes: ShelfTheme.lightThemes)
                     }
@@ -161,11 +164,11 @@ struct SettingsView: View {
                         .frame(width: 18)
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Additional shelf color variation")
+                        Text("Shelf Color Variation")
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(palette.primaryTextColor)
 
-                        Text("Shift shade for Shelf 2, 3… (Low 1×, Medium 2×, High 3×)")
+                        Text("Shifts shade of additional shelves")
                             .font(.system(size: 9.5))
                             .foregroundStyle(palette.secondaryTextColor)
                             .fixedSize(horizontal: false, vertical: true)
@@ -209,6 +212,7 @@ struct SettingsView: View {
                     RoundedRectangle(cornerRadius: 7.5)
                         .fill(isSelected ? palette.accentColor : palette.controlFill)
                 )
+                .hoverDarken(in: RoundedRectangle(cornerRadius: 7.5))
         }
         .buttonStyle(.plain)
     }
@@ -229,19 +233,118 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
     private func themeSwatchDot(for candidate: ShelfTheme) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(candidate.swatchBackground)
-                .frame(width: 22, height: 22)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(candidate.borderColor, lineWidth: 1)
-                )
+        switch candidate {
+        case .random:
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(
+                        AngularGradient(
+                            colors: [.red, .orange, .yellow, .green, .teal, .blue, .purple, .pink, .red],
+                            center: .center
+                        )
+                    )
+                    .frame(width: 22, height: 22)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.white.opacity(0.30), lineWidth: 1)
+                    )
+                Image(systemName: "shuffle")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.45), radius: 1.5, y: 0.5)
+            }
 
-            Circle()
-                .fill(candidate.accentColor)
-                .frame(width: 9, height: 9)
+        case .randomLight:
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.99, green: 0.87, blue: 0.90),
+                                Color(red: 0.99, green: 0.96, blue: 0.82),
+                                Color(red: 0.85, green: 0.96, blue: 0.95),
+                                Color(red: 0.88, green: 0.90, blue: 0.99)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 22, height: 22)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.black.opacity(0.16), lineWidth: 1)
+                    )
+                Image(systemName: "shuffle")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(Color(red: 0.16, green: 0.18, blue: 0.24))
+            }
+
+        case .randomDark:
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.24, green: 0.08, blue: 0.15),
+                                Color(red: 0.08, green: 0.14, blue: 0.26),
+                                Color(red: 0.07, green: 0.20, blue: 0.17)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 22, height: 22)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.white.opacity(0.24), lineWidth: 1)
+                    )
+                Image(systemName: "shuffle")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(Color(red: 0.92, green: 0.94, blue: 1.0))
+            }
+
+        case .randomSystem:
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color(red: 0.94, green: 0.95, blue: 0.98), location: 0.0),
+                                .init(color: Color(red: 0.90, green: 0.92, blue: 0.97), location: 0.48),
+                                .init(color: Color(red: 0.12, green: 0.14, blue: 0.22), location: 0.52),
+                                .init(color: Color(red: 0.08, green: 0.10, blue: 0.16), location: 1.0)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 22, height: 22)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(palette.borderColor, lineWidth: 1)
+                    )
+                Image(systemName: "shuffle")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.60), radius: 1.8, y: 0.5)
+            }
+
+        default:
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(candidate.swatchBackground)
+                    .frame(width: 22, height: 22)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(candidate.borderColor, lineWidth: 1)
+                    )
+
+                Circle()
+                    .fill(candidate.accentColor)
+                    .frame(width: 9, height: 9)
+            }
         }
     }
 
@@ -278,6 +381,7 @@ struct SettingsView: View {
                 RoundedRectangle(cornerRadius: 8.5)
                     .strokeBorder(isActive ? palette.accentColor.opacity(0.68) : palette.borderColor.opacity(0.50), lineWidth: 1)
             )
+            .hoverDarken(in: RoundedRectangle(cornerRadius: 8.5))
         }
         .buttonStyle(.plain)
     }
@@ -288,41 +392,42 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 7) {
             sectionLabel("Shelf Behavior")
 
-            settingsToggle(
-                "Auto Hide",
-                subtitle: "Tucks shelves into the screen edge (~90% hidden in Color Only)",
-                icon: "sidebar.right",
-                isOn: $settings.autoHideEnabled
-            )
-
-            if settings.autoHideEnabled {
-                VStack(alignment: .leading, spacing: 7) {
-                    settingsToggle(
-                        "Clean Auto hide",
-                        subtitle: "Show a minimal edge tab instead of clipped rows",
-                        icon: "sparkles.rectangle.stack",
-                        isOn: $settings.prettyAutoHideTab
-                    )
-
-                    if settings.prettyAutoHideTab {
-                        HStack(spacing: 6) {
-                            ForEach(AutoHideTabStyle.allCases) { style in
-                                autoHideStylePill(style)
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 2)
-                    }
-                }
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(palette.rowFill)
+            VStack(alignment: .leading, spacing: 7) {
+                settingsToggle(
+                    "Auto Hide",
+                    subtitle: "Tucks shelves away into the screen edge",
+                    icon: "sidebar.right",
+                    isOn: $settings.autoHideEnabled
                 )
+
+                if settings.autoHideEnabled {
+                    LazyVGrid(columns: themeColumns, spacing: 6) {
+                        ForEach(AutoHideTabStyle.allCases) { style in
+                            autoHideStylePill(style)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 4)
+                }
             }
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 11)
+                    .fill(palette.rowFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 11)
+                    .strokeBorder(palette.borderColor.opacity(0.65), lineWidth: 1)
+            )
 
             settingsToggle("Remove after drag out", icon: "arrow.up.forward.square", isOn: $settings.autoRemoveOnDragOut)
             settingsToggle("Auto-close shelf when empty", icon: "eye.slash", isOn: $settings.autoHideWhenEmpty)
+            settingsToggle(
+                "Show Copy button in shelf",
+                subtitle: "Adds a Copy toolbar button next to Trash",
+                icon: "doc.on.doc",
+                isOn: $settings.showCopyButtonInShelf
+            )
         }
     }
 
@@ -333,21 +438,22 @@ struct SettingsView: View {
                 settings.autoHideTabStyle = style
             }
         } label: {
-            VStack(spacing: 3) {
+            HStack(spacing: 6) {
                 Image(systemName: style.systemImage)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                 Text(style.displayName)
-                    .font(.system(size: 9.5, weight: isSelected ? .semibold : .medium))
+                    .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
                     .lineLimit(1)
             }
             .foregroundStyle(isSelected ? palette.accentForegroundColor : palette.primaryTextColor)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 6)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? palette.accentColor : palette.controlFill)
             )
+            .hoverDarken(in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
     }
@@ -363,8 +469,68 @@ struct SettingsView: View {
                 settingsToggle("Left edge", icon: "arrow.left.to.line", isOn: $settings.leftEdgeEnabled)
                 settingsToggle("Right edge", icon: "arrow.right.to.line", isOn: $settings.rightEdgeEnabled)
                 settingsToggle("Edge glow indicator", icon: "sparkles", isOn: $settings.showEdgeIndicators)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(palette.secondaryTextColor)
+                            .frame(width: 18)
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Window creation sensitivity")
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(palette.primaryTextColor)
+
+                            Text("How close to the screen edge a drag triggers a new shelf")
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(palette.secondaryTextColor)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+
+                    HStack(spacing: 5) {
+                        ForEach(EdgeCreationSensitivity.allCases) { sensitivity in
+                            edgeSensitivityPill(sensitivity)
+                        }
+                    }
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 11)
+                        .fill(palette.rowFill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11)
+                        .strokeBorder(palette.borderColor.opacity(0.65), lineWidth: 1)
+                )
+                .padding(.top, 2)
             }
         }
+    }
+
+    private func edgeSensitivityPill(_ sensitivity: EdgeCreationSensitivity) -> some View {
+        let isSelected = settings.edgeCreationSensitivity == sensitivity
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                settings.edgeCreationSensitivity = sensitivity
+            }
+        } label: {
+            Text(sensitivity.displayName)
+                .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? palette.accentForegroundColor : palette.primaryTextColor)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 7.5)
+                        .fill(isSelected ? palette.accentColor : palette.controlFill)
+                )
+                .hoverDarken(in: RoundedRectangle(cornerRadius: 7.5))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Other Triggers
@@ -401,6 +567,7 @@ struct SettingsView: View {
                                 RoundedRectangle(cornerRadius: 6)
                                     .strokeBorder(isRecordingHotkey ? palette.accentColor.opacity(0.65) : palette.borderColor, lineWidth: 1)
                             )
+                            .hoverDarken(in: RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
                 }
@@ -444,6 +611,25 @@ struct SettingsView: View {
             settingsToggle("Show menu bar icon", icon: "menubar.rectangle", isOn: $settings.showMenuBarIcon)
             settingsToggle("Launch at login", icon: "power", isOn: $settings.launchAtLogin)
         }
+    }
+
+    private var appVersionString: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
+    }
+
+    private var versionFooter: some View {
+        VStack(spacing: 8) {
+            Rectangle()
+                .fill(palette.dividerColor.opacity(0.6))
+                .frame(height: 0.75)
+
+            Text("Droptop Version \(appVersionString)")
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(palette.tertiaryTextColor.opacity(0.75))
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(.top, 2)
+        .padding(.bottom, 4)
     }
 
     // MARK: - Helpers
