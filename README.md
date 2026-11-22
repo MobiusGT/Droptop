@@ -1,139 +1,122 @@
 <p align="center">
-  <img src="Assets/dropi_icon_256x256.png" width="128" height="128" alt="Dropi Icon">
+  <img src="Assets/dropi_icon_256x256.png" width="128" height="128" alt="Droptop Icon">
 </p>
 
-<h1 align="center">Dropi</h1>
+<h1 align="center">Droptop</h1>
 
 <p align="center">
-  A lightweight, open-source file shelf for macOS.<br>
-  Drag files in. Drag them out. That's it.
+  A native, open-source multi-shelf drag-and-drop utility for macOS (Apple Silicon).<br>
+  Drag files, folders, images, URLs, or text snippets to the screen edge — pick them up anywhere.
 </p>
 
-<h3 align="center">Download</h3>
-
 <p align="center">
-  <a href="https://github.com/akinalpfdn/Dropi/releases/latest/download/Dropi.dmg">
+  <a href="https://github.com/MobiusGT/Droptop/releases/latest">
     <img src="Assets/btn-macos.svg" alt="Download for macOS">
   </a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/v/release/akinalpfdn/Dropi?style=flat-square&color=blue" alt="Version">
+  <a href="https://github.com/MobiusGT/Droptop/releases">
+    <img src="https://img.shields.io/github/v/release/MobiusGT/Droptop?style=flat-square&color=blue" alt="Version">
+  </a>
   <img src="https://img.shields.io/badge/license-GPLv3-blue?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey?style=flat-square" alt="Platform">
-</p>
-
-<p align="center">
-  <img src="Assets/Dropi.gif" width="600" alt="Dropi Demo">
+  <img src="https://img.shields.io/badge/platform-macOS%2015%2B%20(Apple%20Silicon)-lightgrey?style=flat-square" alt="Platform">
 </p>
 
 ---
 
-## What is Dropi?
+## Credits & Attribution
 
-Dropi is a floating file shelf that sits on top of your windows. It gives you a temporary place to hold files while you navigate between folders, apps, or desktops.
+**Droptop** is a modified fork and derivative of **[Dropi](https://github.com/akinalpfdn/Dropi)**, originally created by **[akinalpfdn](https://github.com/akinalpfdn)** and released under the [GNU General Public License v3.0](LICENSE).
 
-No more arranging windows side by side just to move a file. No more losing track of what you were dragging.
+- Full credit for the original concept, project foundation, app icon assets, and open-source Swift/AppKit shelf architecture goes to **[akinalpfdn](https://github.com/akinalpfdn)** ([akinalpfdn/Dropi](https://github.com/akinalpfdn/Dropi)).
+- **All changes, fixes, and new features in Droptop** (modified November 2026) were made with **Gemini 4 Neon Xhigh**.
+- In accordance with the GNU GPLv3, Droptop remains completely free and open source under the same [GPLv3 license](LICENSE).
 
-**Drop it in. Pick it up later.**
+---
 
-## Why Dropi?
+## What is Droptop?
 
-Moving files on macOS often means:
-- Resizing windows to see both source and destination
-- Opening multiple Finder tabs or windows
-- Losing your place when switching between apps
-- Dragging across multiple desktops with split-second precision
-
-Dropi eliminates all of that. It's a shelf that floats above everything, appears when you need it, and gets out of the way when you don't.
+Droptop provides floating, non-activating edge shelves that sit above your windows across macOS Virtual Desktops (Spaces) without stealing focus from Finder or your active app. Drag items to the left or right edge of your screen to drop them into a shelf, switch apps or desktops, and drag one, several, or all items right back out.
 
 ## Features
 
-- **Multiple triggers** - Shake your mouse, drag to screen edges, or use a keyboard shortcut
-- **Edge glow indicators** - Visual cues show where to drag during file operations
-- **Drag in, drag out** - Files are automatically removed from the shelf when you drop them elsewhere
-- **Multi-file selection** - Click to select, Cmd+click for multiple, drag them all at once
-- **Compact and expanded views** - Stack preview for a few files, grid view for many
-- **Auto-dismiss** - Shelf closes when you drop files outside of it
-- **Lightweight** - Runs as a menu bar app, no dock icon, minimal resource usage
-- **Configurable** - Toggle triggers, set custom hotkeys, launch at login
-- **Native macOS** - Built with SwiftUI, feels like part of the system
+### Multi-Shelf & Drag-and-Drop
+- **Multiple independent shelves** — create as many shelves as you need on the left and right edges, each numbered (`Shelf 1`, `Shelf 2`, …).
+- **Selectable item lists** — click, `⌘`-click, `⇧`-click, or use **All / None** to take a single item, a multi-selection, or everything from a shelf at once.
+- **5 supported payload types** — files, folders, images, web URLs, and text snippets (with native AppKit `NSPasteboard` and `NSFilePromiseProvider` support).
+- **Dock folder stack compatible** — drag files straight out of folders pinned in the macOS Dock to trigger new shelves or drop into existing ones.
+- **Non-intrusive global drag monitor** — distinguishes genuine drag sessions from Finder left-click marquee multi-select and automatically recovers from macOS event-tap timeouts.
+- **Steady full-name reveal on hover** — hovering truncated long filenames displays a clean anchored tooltip pill right next to the shelf without text jitter.
 
-## Screenshots
+### Auto Hide, Positioning & Spaces Support
+- **Auto Hide with Clean Auto hide styles**:
+  - **File Icons** (~80% hidden) — peeks just your file icons along the edge.
+  - **Shelf Number** (~80% hidden) — shows a clean numbered badge and item count.
+  - **Color Only** (~90% hidden) — collapses to a slim themed accent strip.
+  - Smooth edge-growing unhide animation and instant resizing when switching styles.
+- **Zero Virtual Desktop (Space) bleed** — auto-hidden shelves shrink strictly within screen bounds so nothing spills onto adjacent desktops, and open shelves auto-hide cleanly when switching Spaces.
+- **Free repositioning & deterministic side switching** — drag any shelf up/down by its header or past the screen's horizontal halfway line to snap to the left or right edge (using a custom drag loop that never triggers macOS's half-screen window tiling animation).
+- **Non-overlapping territory snapping** — shelves cannot be dropped on top of another shelf's territory; overlapping one shelf or a tight multi-shelf cluster snaps cleanly into the free space above or below based on overlap side, with live edge snap preview.
 
-<table>
-  <tr>
-    <td align="center"><img src="Assets/drop-zone.png" width="280" alt="Drop Zone"><br><sub>Drop Zone</sub></td>
-    <td align="center"><img src="Assets/compact-view.png" width="280" alt="Compact View"><br><sub>Compact View</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="Assets/expanded-view.png" width="280" alt="Expanded View"><br><sub>Expanded View</sub></td>
-    <td align="center"><img src="Assets/edge-indicator.png" width="280" alt="Edge Indicator"><br><sub>Edge Glow Indicator</sub></td>
-  </tr>
-</table>
+### Themes & Appearance
+- **101 built-in themes** — `System Glass` (adaptive), **50 Dark**, and **50 Light** themes with explicit high-contrast `.aqua`/`.darkAqua` appearances, organized into a collapsible **Themes** section in Settings and sorted smoothly across the color spectrum (Red → Orange → Yellow → Green → Teal → Blue → Purple → Pink → Neutrals).
+- **Additional shelf color variation (`Off`, `Low`, `Medium`, `High`)** — keep Shelf 1 in the base theme while subtly shifting Shelf 2, 3, … within the same color family at 0×, 1×, 2×, or 3× intensity.
+
+### Additional Triggers
+- **Screen-edge drag** (enabled by default on both left and right edges, with optional glow indicator).
+- **Shake while dragging** (optional).
+- **Custom global keyboard shortcut** (optional, default `⌘⇧Space`).
+- **Menu bar app** (`LSUIElement`) with quick shelf switcher, clipboard-to-shelf creation, theme picker, and Launch at Login.
+
+---
 
 ## Installation
 
 ### Download
-Get the latest release from the [Releases page](https://github.com/akinalpfdn/Dropi/releases/latest).
+Get the latest build from the [Releases page](https://github.com/MobiusGT/Droptop/releases).
 
-1. Download `Dropi.dmg`
-2. Drag Dropi to your Applications folder
-3. Launch Dropi
-4. Grant Accessibility permission when prompted (required for mouse triggers)
+1. Download and unzip `Droptop.app`
+2. Move `Droptop.app` to your `/Applications` folder
+3. Launch **Droptop** (if macOS warns about an ad-hoc signed build, right-click → **Open** or allow it in **System Settings → Privacy & Security**)
+4. Optional: grant **Accessibility** permission in Settings if you want global keyboard shortcuts (screen-edge dragging works out of the box)
 
 ### Build from Source
+
+Requires **Xcode 16+** and **macOS 15+** (Apple Silicon `arm64`).
+
 ```bash
-git clone https://github.com/akinalpfdn/Dropi.git
-cd Dropi
-open Dropi.xcodeproj
+git clone https://github.com/MobiusGT/Droptop.git
+cd Droptop
+xcodebuild -project Dropi.xcodeproj -scheme Dropi -configuration Release ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO build
 ```
 
-Build and run with Xcode 15+ targeting macOS 14+.
+Or open `Dropi.xcodeproj` in Xcode and build the `Dropi` scheme (which produces `Droptop.app`).
+
+---
 
 ## Usage
 
 | Action | How |
 |--------|-----|
-| **Open shelf** | Shake mouse while dragging a file, drag to screen edge, or press hotkey |
-| **Add files** | Drag files onto the shelf |
-| **Use files** | Drag files out of the shelf to any destination |
-| **Select files** | Click a file in expanded view, Cmd+click for multi-select |
-| **Remove files** | Drag out to another app (auto-removes), hover and click X, or use Clear All |
-| **Settings** | Click the gear icon on the shelf |
-
-## Configuration
-
-Access settings through the gear icon on the shelf:
-
-- **Triggers** - Enable/disable shake, edge, and hotkey triggers independently
-- **Hotkey** - Record a custom keyboard shortcut
-- **Launch at Login** - Start Dropi automatically
-- **Menu Bar Icon** - Show or hide the menu bar icon
-
-## Tech Stack
-
-- Swift 5.9+
-- SwiftUI
-- AppKit (NSPanel, NSDraggingSource)
-- macOS 14 Sonoma+
-
-## Contributing
-
-Contributions are welcome. Please open an issue first to discuss what you'd like to change.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/your-feature`)
-3. Commit your changes
-4. Push to the branch
-5. Open a Pull Request
-
-## License
-
-[GNU GPLv3](LICENSE)
+| **Open shelf** | Drag a file/item to the left or right screen edge, press your hotkey, or click **New Shelf** in the menu bar |
+| **Add items** | Drop files, folders, images, URLs, or text onto a shelf, or click **Paste** |
+| **Select items** | Click a row, `⌘`-click for multiple, `⇧`-click for a range, or click **All / None** |
+| **Drag back out** | Drag any row (or selected rows) or use the bottom **Drag Item / Drag Selected / Drag All** pill |
+| **Move / switch sides** | Drag a shelf's header up/down or past the horizontal center of the screen to dock on the opposite edge |
+| **Inspect long names** | Hover over a truncated filename to display the full name next to the shelf |
+| **Settings & Themes** | Click the gear icon on any shelf or choose **Settings…** from the menu bar |
 
 ---
 
-<p align="center">
-  Made with care for people who move files around a lot.
-</p>
+## Tech Stack
+
+- Swift / SwiftUI
+- AppKit (`NSPanel`, `NSDraggingSource`, `NSDraggingDestination`, `NSFilePromiseProvider`)
+- macOS 15+ (Apple Silicon `arm64`)
+
+---
+
+## License
+
+This project is licensed under the **[GNU General Public License v3.0](LICENSE)** — derived from [akinalpfdn/Dropi](https://github.com/akinalpfdn/Dropi).

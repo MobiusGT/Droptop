@@ -1,73 +1,54 @@
 import AppKit
+import Foundation
 
+@MainActor
 final class ShakeTrigger: ShelfTrigger {
-    var isEnabled: Bool = true
-    var onTrigger: ((NSPoint) -> Void)?
+    var isEnabled: Bool = false
+    var onTrigger: ((TriggerEvent) -> Void)?
 
-    private var dragMonitor: Any?
-    private var mouseDownMonitor: Any?
-    private var mouseUpMonitor: Any?
-
+    private var observerID: UUID?
     private var directionChanges: [Date] = []
     private var lastDirection: Int = 0
     private var cooldownUntil: Date = .distantPast
 
-    private var changeCountAtMouseDown: Int = 0
-    private var isDraggingFile = false
-
     private let requiredChanges = 3
-    private let timeWindow: TimeInterval = 0.5
-    private let minimumDelta: CGFloat = 5.0
+    private let timeWindow: TimeInterval = 0.45
+    private let minimumDelta: CGFloat = 6.0
     private let cooldownDuration: TimeInterval = 1.0
 
     func start() {
-        let dragPasteboard = NSPasteboard(name: .drag)
-
-        mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
-            self?.changeCountAtMouseDown = dragPasteboard.changeCount
-            self?.isDraggingFile = false
-            self?.directionChanges.removeAll()
-            self?.lastDirection = 0
-        }
-
-        dragMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] event in
-            guard let self else { return }
-            if !self.isDraggingFile {
-                let newCount = dragPasteboard.changeCount
-                guard newCount > self.changeCountAtMouseDown else { return }
-                let hasFiles = dragPasteboard.canReadObject(forClasses: [NSURL.self], options: [
-                    .urlReadingFileURLsOnly: true
-                ])
-                guard hasFiles else { return }
-                self.isDraggingFile = true
+        guard observerID == nil else { return }
+        observerID = GlobalDragMonitor.shared.addObserver(
+            onDragBegan: { [weak self] _ in
+                self?.resetState()
+            },
+            onDragMoved: { [weak self] location, deltaX, _ in
+                self?.handleMove(location: location, deltaX: deltaX)
+            },
+            onDragEnded: { [weak self] _ in
+                self?.resetState()
             }
-            self.handle(event)
-        }
-
-        mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
-            self?.isDraggingFile = false
-            self?.directionChanges.removeAll()
-            self?.lastDirection = 0
-        }
+        )
     }
 
     func stop() {
-        [dragMonitor, mouseDownMonitor, mouseUpMonitor].compactMap { $0 }.forEach {
-            NSEvent.removeMonitor($0)
+        if let observerID {
+            GlobalDragMonitor.shared.removeObserver(id: observerID)
+            self.observerID = nil
         }
-        dragMonitor = nil
-        mouseDownMonitor = nil
-        mouseUpMonitor = nil
-        directionChanges.removeAll()
-        lastDirection = 0
-        isDraggingFile = false
+        resetState()
     }
 
-    private func handle(_ event: NSEvent) {
-        guard isEnabled, Date() > cooldownUntil else { return }
-        guard abs(event.deltaX) >= minimumDelta else { return }
+    private func resetState() {
+        directionChanges.removeAll()
+        lastDirection = 0
+    }
 
-        let direction = event.deltaX > 0 ? 1 : -1
+    private func handleMove(location: NSPoint, deltaX: CGFloat) {
+        guard isEnabled, Date() > cooldownUntil else { return }
+        guard abs(deltaX) >= minimumDelta else { return }
+
+        let direction = deltaX > 0 ? 1 : -1
         guard direction != lastDirection, lastDirection != 0 else {
             lastDirection = direction
             return
@@ -81,7 +62,7 @@ final class ShakeTrigger: ShelfTrigger {
         if directionChanges.count >= requiredChanges {
             cooldownUntil = now.addingTimeInterval(cooldownDuration)
             directionChanges.removeAll()
-            onTrigger?(NSEvent.mouseLocation)
+            onTrigger?(.shake(location: location))
         }
     }
 }

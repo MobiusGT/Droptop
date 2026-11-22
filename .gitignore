@@ -1,4 +1,15 @@
+# Local notes / tooling
 claude.md
 decisions.md
 .docs/
 .claude/
+
+# macOS & Xcode
+.DS_Store
+**/.DS_Store
+xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+build/
+*.dSYM
+*.app

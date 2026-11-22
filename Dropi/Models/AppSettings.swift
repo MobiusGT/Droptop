@@ -6,14 +6,46 @@ import ServiceManagement
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
-    @Published var hotkeyEnabled: Bool {
-        didSet { UserDefaults.standard.set(hotkeyEnabled, forKey: Keys.hotkeyEnabled) }
-    }
     @Published var edgeEnabled: Bool {
         didSet { UserDefaults.standard.set(edgeEnabled, forKey: Keys.edgeEnabled) }
     }
+    @Published var leftEdgeEnabled: Bool {
+        didSet { UserDefaults.standard.set(leftEdgeEnabled, forKey: Keys.leftEdgeEnabled) }
+    }
+    @Published var rightEdgeEnabled: Bool {
+        didSet { UserDefaults.standard.set(rightEdgeEnabled, forKey: Keys.rightEdgeEnabled) }
+    }
+    @Published var showEdgeIndicators: Bool {
+        didSet { UserDefaults.standard.set(showEdgeIndicators, forKey: Keys.showEdgeIndicators) }
+    }
     @Published var shakeEnabled: Bool {
         didSet { UserDefaults.standard.set(shakeEnabled, forKey: Keys.shakeEnabled) }
+    }
+    @Published var hotkeyEnabled: Bool {
+        didSet { UserDefaults.standard.set(hotkeyEnabled, forKey: Keys.hotkeyEnabled) }
+    }
+    @Published var autoRemoveOnDragOut: Bool {
+        didSet { UserDefaults.standard.set(autoRemoveOnDragOut, forKey: Keys.autoRemoveOnDragOut) }
+    }
+    @Published var autoHideWhenEmpty: Bool {
+        didSet { UserDefaults.standard.set(autoHideWhenEmpty, forKey: Keys.autoHideWhenEmpty) }
+    }
+    /// Auto Hide: tucks inactive shelves 80% off-screen along the docked edge.
+    @Published var autoHideEnabled: Bool {
+        didSet { UserDefaults.standard.set(autoHideEnabled, forKey: Keys.autoHideEnabled) }
+    }
+    /// Clean Auto-Hide Tab: replaces the clipped edge preview with a polished minimal tab while auto-hidden.
+    @Published var prettyAutoHideTab: Bool {
+        didSet { UserDefaults.standard.set(prettyAutoHideTab, forKey: Keys.prettyAutoHideTab) }
+    }
+    @Published var autoHideTabStyle: AutoHideTabStyle {
+        didSet { UserDefaults.standard.set(autoHideTabStyle.rawValue, forKey: Keys.autoHideTabStyle) }
+    }
+    @Published var shelfTheme: ShelfTheme {
+        didSet { UserDefaults.standard.set(shelfTheme.rawValue, forKey: Keys.shelfTheme) }
+    }
+    @Published var colorVariationLevel: ColorVariationLevel {
+        didSet { UserDefaults.standard.set(colorVariationLevel.rawValue, forKey: Keys.colorVariationLevel) }
     }
     @Published var launchAtLogin: Bool {
         didSet {
@@ -51,13 +83,49 @@ final class AppSettings: ObservableObject {
         return parts.joined()
     }
 
+    func isEdgeAllowed(_ edge: ScreenEdge) -> Bool {
+        guard edgeEnabled else { return false }
+        switch edge {
+        case .left: return leftEdgeEnabled
+        case .right: return rightEdgeEnabled
+        }
+    }
+
     private init() {
         let defaults = UserDefaults.standard
+        Self.migrateLegacyPreferencesIfNeeded(into: defaults)
         let defaultModifiers = NSEvent.ModifierFlags([.command, .shift]).rawValue
 
-        hotkeyEnabled = defaults.object(forKey: Keys.hotkeyEnabled) as? Bool ?? true
         edgeEnabled = defaults.object(forKey: Keys.edgeEnabled) as? Bool ?? true
-        shakeEnabled = defaults.object(forKey: Keys.shakeEnabled) as? Bool ?? true
+        leftEdgeEnabled = defaults.object(forKey: Keys.leftEdgeEnabled) as? Bool ?? true
+        rightEdgeEnabled = defaults.object(forKey: Keys.rightEdgeEnabled) as? Bool ?? true
+        showEdgeIndicators = defaults.object(forKey: Keys.showEdgeIndicators) as? Bool ?? true
+        shakeEnabled = defaults.object(forKey: Keys.shakeEnabled) as? Bool ?? false
+        hotkeyEnabled = defaults.object(forKey: Keys.hotkeyEnabled) as? Bool ?? true
+        autoRemoveOnDragOut = defaults.object(forKey: Keys.autoRemoveOnDragOut) as? Bool ?? true
+        autoHideWhenEmpty = defaults.object(forKey: Keys.autoHideWhenEmpty) as? Bool ?? true
+        autoHideEnabled = defaults.object(forKey: Keys.autoHideEnabled) as? Bool ?? false
+        prettyAutoHideTab = defaults.object(forKey: Keys.prettyAutoHideTab) as? Bool ?? true
+        if let rawTabStyle = defaults.string(forKey: Keys.autoHideTabStyle),
+           let parsedTabStyle = AutoHideTabStyle(rawValue: rawTabStyle) {
+            autoHideTabStyle = parsedTabStyle
+        } else {
+            autoHideTabStyle = .fileIcons
+        }
+        if let rawTheme = defaults.string(forKey: Keys.shelfTheme),
+           let parsedTheme = ShelfTheme(rawValue: rawTheme) {
+            shelfTheme = parsedTheme
+        } else {
+            shelfTheme = .systemGlass
+        }
+        if let rawVar = defaults.string(forKey: Keys.colorVariationLevel),
+           let parsedVar = ColorVariationLevel(rawValue: rawVar) {
+            colorVariationLevel = parsedVar
+        } else if let legacyVary = defaults.object(forKey: Keys.legacyVaryColors) as? Bool, legacyVary {
+            colorVariationLevel = .low
+        } else {
+            colorVariationLevel = .off
+        }
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
         showMenuBarIcon = defaults.object(forKey: Keys.showMenuBarIcon) as? Bool ?? true
         hotkeyKeyCode = UInt16(defaults.object(forKey: Keys.hotkeyKeyCode) as? Int ?? 49)
@@ -70,8 +138,9 @@ final class AppSettings: ObservableObject {
     }
 
     private func updateLoginItem() {
-        try? SMAppService.mainApp.register()
-        if !launchAtLogin {
+        if launchAtLogin {
+            try? SMAppService.mainApp.register()
+        } else {
             try? SMAppService.mainApp.unregister()
         }
     }
@@ -89,10 +158,32 @@ final class AppSettings: ObservableObject {
         return mapping[keyCode] ?? "Key\(keyCode)"
     }
 
+    private static func migrateLegacyPreferencesIfNeeded(into defaults: UserDefaults) {
+        let migrationFlag = "didMigrateFromDropshelfReplacement"
+        guard !defaults.bool(forKey: migrationFlag) else { return }
+        if let legacy = defaults.persistentDomain(forName: "com.local.DropshelfReplacement") {
+            for (key, value) in legacy where defaults.object(forKey: key) == nil {
+                defaults.set(value, forKey: key)
+            }
+        }
+        defaults.set(true, forKey: migrationFlag)
+    }
+
     private enum Keys {
-        static let hotkeyEnabled = "hotkeyEnabled"
         static let edgeEnabled = "edgeEnabled"
+        static let leftEdgeEnabled = "leftEdgeEnabled"
+        static let rightEdgeEnabled = "rightEdgeEnabled"
+        static let showEdgeIndicators = "showEdgeIndicators"
         static let shakeEnabled = "shakeEnabled"
+        static let hotkeyEnabled = "hotkeyEnabled"
+        static let autoRemoveOnDragOut = "autoRemoveOnDragOut"
+        static let autoHideWhenEmpty = "autoHideWhenEmpty"
+        static let autoHideEnabled = "peekWhenUnfocused"
+        static let prettyAutoHideTab = "prettyAutoHideTab"
+        static let autoHideTabStyle = "autoHideTabStyle"
+        static let shelfTheme = "shelfTheme"
+        static let colorVariationLevel = "colorVariationLevel"
+        static let legacyVaryColors = "varyAdditionalShelfColors"
         static let launchAtLogin = "launchAtLogin"
         static let showMenuBarIcon = "showMenuBarIcon"
         static let hotkeyKeyCode = "hotkeyKeyCode"
