@@ -53,7 +53,7 @@ Droptop provides floating, non-activating edge shelves that sit above your windo
     </td>
     <td align="center" width="50%">
       <img src="Assets/screenshots/06-dark-themes.png" alt="Built-in dark themes"><br>
-      <sub>Built-in dark themes</sub>
+      <sub>Built-in themes</sub>
     </td>
   </tr>
 </table>
