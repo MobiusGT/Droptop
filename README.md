@@ -135,14 +135,19 @@ Or open `Dropi.xcodeproj` in Xcode and build the `Dropi` scheme (which produces 
 
 ---
 
-## Credits & Attribution
+## Attributions
 
 **Droptop** is a modified fork and derivative of **[Dropi](https://github.com/akinalpfdn/Dropi)**, originally created by **[akinalpfdn](https://github.com/akinalpfdn)** and released under the [GNU General Public License v3.0](LICENSE).
 
 - Full credit for the original concept, project foundation, app icon assets, and open-source Swift/AppKit shelf architecture goes to **[akinalpfdn](https://github.com/akinalpfdn)** ([akinalpfdn/Dropi](https://github.com/akinalpfdn/Dropi)).
-- **All changes, fixes, and new features in Droptop** (modified November 2026) were made with **Gemini 4 Neon Xhigh**.
 - In accordance with the GNU GPLv3, Droptop remains completely free and open source under the same [GPLv3 license](LICENSE).
 
+---
+
+## Ai Disclosure
+
+- **All changes, fixes, and new features in Droptop** were made with **Gemini 4 Neon xhigh**.
+  
 ---
 
 ## License
