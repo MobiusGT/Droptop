@@ -34,9 +34,9 @@ Droptop provides floating, non-activating edge shelves that sit above your windo
 
 ### Auto Hide, Positioning & Spaces Support
 - **Auto Hide with Clean Auto hide styles**:
-  - **File Icons** (~80% hidden) — peeks just your file icons along the edge.
-  - **Shelf Number** (~80% hidden) — shows a clean numbered badge and item count.
-  - **Color Only** (~90% hidden) — collapses to a slim themed accent strip.
+  - **Icons** — peeks just your file icons along the edge.
+  - **Shelf Number** — shows a clean numbered badge and item count.
+  - **Handle Bar** — collapses to a slim themed accent strip.
   - Smooth edge-growing unhide animation and instant resizing when switching styles.
 - **Free repositioning & deterministic side switching** — drag any shelf up/down by its header or past the screen's horizontal halfway line to snap to the left or right edge (using a custom drag loop that never triggers macOS's half-screen window tiling animation).
 
