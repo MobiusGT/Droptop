@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Assets/dropi_icon_256x256.png" width="128" height="128" alt="Droptop Icon">
+  <img src="Assets/droptop_icon_dark.png" width="128" height="128" alt="Droptop Icon">
 </p>
 
 <h1 align="center">Droptop</h1>
@@ -22,6 +22,41 @@
 ## What is Droptop?
 
 Droptop provides floating, non-activating edge shelves that sit above your windows across macOS Virtual Desktops (Spaces) without stealing focus from Finder or your active app. Drag items to the left or right edge of your screen to drop them into a shelf, switch apps or desktops, and drag one, several, or all items right back out.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="Assets/screenshots/01-drop-zone.png" alt="Screen-edge drop zone and glow"><br>
+      <sub>Screen-edge drop zone &amp; glow</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="Assets/screenshots/02-selection.png" alt="Multi-type items and selection"><br>
+      <sub>Multi-type items &amp; selection</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="Assets/screenshots/03-multi-shelf.png" alt="Multi-shelf color variation"><br>
+      <sub>Multi-shelf color variation</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="Assets/screenshots/04-auto-hide.png" alt="Auto-Hide edge styles"><br>
+      <sub>Auto-Hide edge styles</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="Assets/screenshots/05-hover-tooltip.png" alt="Hover full-name reveal"><br>
+      <sub>Hover full-name reveal</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="Assets/screenshots/06-dark-themes.png" alt="Built-in dark themes"><br>
+      <sub>Built-in dark themes</sub>
+    </td>
+  </tr>
+</table>
 
 ## Features
 

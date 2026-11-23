@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="sidewalkTop" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#D4D7DE"/>
+      <stop offset="100%" stop-color="#C7CAD2"/>
+    </linearGradient>
+    <linearGradient id="sidewalkBot" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#CACDD5"/>
+      <stop offset="100%" stop-color="#BFC2CB"/>
+    </linearGradient>
+    <linearGradient id="asphalt" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#585B63"/>
+      <stop offset="50%" stop-color="#51545C"/>
+      <stop offset="100%" stop-color="#4A4D55"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Base cool-gray sidewalk fill -->
+  <rect width="1024" height="1024" fill="url(#sidewalkTop)"/>
+
+  <!-- Asphalt diagonal road band (widened gently upward by 28px so car + tucked folder sit cleanly in-lane) -->
+  <polygon points="-20,654 1044,5 1044,515 -20,1164" fill="url(#asphalt)"/>
+
+  <!-- Lower-right sidewalk -->
+  <polygon points="-20,1164 1044,515 1044,1044 -20,1044" fill="url(#sidewalkBot)"/>
+
+  <!-- Upper curb (subtle architectural bevel) -->
+  <polygon points="-20,611 1044,-38 1044,-33 -20,616" fill="#A6AAB3"/>
+  <polygon points="-20,616 1044,-33 1044,-15 -20,634" fill="#DCDEE4"/>
+  <polygon points="-20,634 1044,-15 1044,-11 -20,638" fill="#E9EBF1"/>
+  <polygon points="-20,638 1044,-11 1044,5 -20,654" fill="#8C909A"/>
+
+  <!-- Lower curb -->
+  <polygon points="-20,1164 1044,515 1044,519 -20,1168" fill="#E7E9EF"/>
+  <polygon points="-20,1168 1044,519 1044,536 -20,1185" fill="#D5D8DF"/>
+  <polygon points="-20,1185 1044,536 1044,541 -20,1190" fill="#A8ACB5"/>
+</svg>

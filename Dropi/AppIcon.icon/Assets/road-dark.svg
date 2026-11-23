@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="sidewalkTopDark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#31353E"/>
+      <stop offset="100%" stop-color="#282B34"/>
+    </linearGradient>
+    <linearGradient id="sidewalkBotDark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2A2E37"/>
+      <stop offset="100%" stop-color="#22252D"/>
+    </linearGradient>
+    <linearGradient id="asphaltDark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1E2027"/>
+      <stop offset="50%" stop-color="#191B21"/>
+      <stop offset="100%" stop-color="#15171C"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Base twilight dark-slate sidewalk fill -->
+  <rect width="1024" height="1024" fill="url(#sidewalkTopDark)"/>
+
+  <!-- Deep night asphalt diagonal road band -->
+  <polygon points="-20,654 1044,5 1044,515 -20,1164" fill="url(#asphaltDark)"/>
+
+  <!-- Lower-right dark sidewalk -->
+  <polygon points="-20,1164 1044,515 1044,1044 -20,1044" fill="url(#sidewalkBotDark)"/>
+
+  <!-- Upper curb (dark architectural bevel) -->
+  <polygon points="-20,611 1044,-38 1044,-33 -20,616" fill="#1F222A"/>
+  <polygon points="-20,616 1044,-33 1044,-15 -20,634" fill="#3B404B"/>
+  <polygon points="-20,634 1044,-15 1044,-11 -20,638" fill="#494F5D"/>
+  <polygon points="-20,638 1044,-11 1044,5 -20,654" fill="#252831"/>
+
+  <!-- Lower curb -->
+  <polygon points="-20,1164 1044,515 1044,519 -20,1168" fill="#474D5B"/>
+  <polygon points="-20,1168 1044,519 1044,536 -20,1185" fill="#363B46"/>
+  <polygon points="-20,1185 1044,536 1044,541 -20,1190" fill="#20232B"/>
+</svg>

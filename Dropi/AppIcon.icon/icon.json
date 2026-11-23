@@ -1,0 +1,83 @@
+{
+  "fill-specializations" : [
+    {
+      "value" : {
+        "solid" : "srgb:0.78431,0.79608,0.82353,1.00000"
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "solid" : "srgb:0.15686,0.16863,0.20392,1.00000"
+      }
+    }
+  ],
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "car.png",
+          "name" : "car-and-folder",
+          "position" : {
+            "scale" : 1.15,
+            "translation-in-points" : [
+              -6,
+              -14
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.35
+      },
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.0
+      }
+    },
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "car-shadow.png",
+          "name" : "ground-shadow",
+          "position" : {
+            "scale" : 1.15,
+            "translation-in-points" : [
+              -6,
+              -14
+            ]
+          }
+        },
+        {
+          "glass" : false,
+          "image-name-specializations" : [
+            {
+              "value" : "road-light.svg"
+            },
+            {
+              "appearance" : "dark",
+              "value" : "road-dark.svg"
+            }
+          ],
+          "name" : "road"
+        }
+      ],
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0.0
+      },
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.0
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}
