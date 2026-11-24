@@ -152,4 +152,4 @@ Or open `Dropi.xcodeproj` in Xcode and build the `Dropi` scheme (which produces 
 
 ## License
 
-This project is licensed under the **[GNU General Public License v3.0](LICENSE)** — derived from [akinalpfdn/Dropi](https://github.com/akinalpfdn/Dropi).
+This project is licensed under the **[GNU General Public License v3.0](LICENSE)**.
